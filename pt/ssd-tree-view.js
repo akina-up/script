@@ -7,6 +7,7 @@
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
 // @grant        GM_addStyle
 // @grant        GM_getResourceText
+// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
 // @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @require      https://cdn.jsdelivr.net/npm/jstree@3.3.11/dist/jstree.min.js
 // @resource     customCSS https://cdn.jsdelivr.net/npm/jstree@3.3.11/dist/themes/default/style.min.css
