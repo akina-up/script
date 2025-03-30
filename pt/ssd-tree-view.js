@@ -4,7 +4,6 @@
 // @description  将页面中的文件列表（表格）转换为带图标、排序、搜索、智能折叠功能的树状视图
 // @author       akina
 // @match        *://springsunday.net/details.php?id=*
-// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
 // @grant        GM_addStyle
 // @grant        GM_getResourceText
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
