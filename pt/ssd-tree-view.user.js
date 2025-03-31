@@ -1,18 +1,28 @@
 // ==UserScript==
 // @name         SSD文件树状视图
-// @version      1.0
+// @version      1.1
 // @description  将页面中的文件列表（表格）转换为带图标、排序、搜索、智能折叠功能的树状视图
 // @author       akina
 // @match        *://springsunday.net/details.php?id=*
 // @grant        GM_addStyle
 // @grant        GM_getResourceText
-// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.user.js
-// @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
+// @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/pt/ssd-tree-view.js
 // @require      https://code.jquery.com/jquery-3.6.0.min.js
 // @require      https://cdn.jsdelivr.net/npm/jstree@3.3.11/dist/jstree.min.js
 // @resource     customCSS https://cdn.jsdelivr.net/npm/jstree@3.3.11/dist/themes/default/style.min.css
 // @connect      *
 // ==/UserScript==
+
+/* 更新日志
+ * v1.1
+
+ * think @DreamRu
+
+ * - 1.点击展开节点(原双击展开)
+ * - 2.通过“下载”框获取最外层文件名
+ * - 3.每个节点名后面加入所属文件数量
+ */
 
 (function() {
     'use strict';
@@ -144,6 +154,21 @@
             this.childNode = new Map();
             this._cache = new Map();
         }
+    // 计算当前节点下的文件数量
+    countFiles() {
+        if (this._cache.has('fileCount')) return this._cache.get('fileCount');
+        let count = 0;
+        for (const node of this.childNode.values()) {
+            if (node.childNode.size === 0) {
+                count += 1;
+            } else {
+                count += node.countFiles();
+            }
+        }
+        this._cache.set('fileCount', count);
+        return count;
+    }
+
 
         // 插入节点：path 为数组（路径分段），size 为文件大小字符串（例如 "0.28 KB"）
         insert(path, size) {
@@ -163,8 +188,10 @@
         toString() {
             const size = this.childNode.size > 0 ? this.calculateTotalSize() : this.length;
             const icon = this.childNode.size > 0 ? "📁" : "📄";
-            return `<span class="icon">${icon}</span><span class="filename">${this.name}</span><span class="filesize">${this.toSize(size)}</span>`;
+            const countStr = this.childNode.size > 0 ? ` (${this.countFiles()})` : '';
+            return `<span class="icon">${icon}</span><span class="filename">${this.name}${countStr}</span><span class="filesize">${this.toSize(size)}</span>`;
         }
+        
 
         // 计算总大小（包含子节点累计）
         calculateTotalSize() {
@@ -198,11 +225,13 @@
                 } else {
                     // 文件夹节点，前置增加 📁 图标
                     const inner = value.toObject();
+                    const fileCount = value.countFiles();
                     folders.push({
                         ...inner,
-                        text: `<span class="icon">📁</span><span class="filename">${value.name}</span><span class="filesize">${this.toSize(value.calculateTotalSize())}</span>`,
+                        text: `<span class="icon">📁</span><span class="filename">${value.name} (${fileCount})</span><span class="filesize">${this.toSize(value.calculateTotalSize())}</span>`,
                         state: { opened: false }
                     });
+                    
                 }
             }
             ret.children = [...folders, ...files];
@@ -342,7 +371,15 @@
         setupCSS();
 
         // 创建树数据，根节点名称可自行调整
-        const data = new TreeNode('文件列表');
+        // 从页面提取种子文件名并清洗前缀和后缀
+        const rawTitle = $('td.rowfollow.forcewrap a.index').text().trim();
+        const cleanedTitle = rawTitle
+            .replace('[SSD].', '')           // 去除固定前缀
+            .replace(/\.torrent$/i, '');     // 去除.torrent后缀（大小写不敏感）
+
+        // 创建树数据
+        const data = new TreeNode(cleanedTitle || '文件列表');
+
 
         // 从 #filelist 中获取表格数据（跳过第一行表头）
         $("#filelist table.main tr:gt(0)").each(function() {
@@ -402,6 +439,14 @@
 
         // 绑定 jstree 相关事件
         treeInstance.on("ready.jstree", function() {
+        treeInstance.on("select_node.jstree", function (e, data) {
+            const tree = treeInstance.jstree(true);
+            if (tree.is_open(data.node)) {
+                tree.close_node(data.node);
+            } else {
+                tree.open_node(data.node);
+            }
+        });
             const tree = treeInstance.jstree(true);
             const isSmartMode = localStorage.getItem('dmhy_smart_mode') !== 'false';
             if (isSmartMode) {
