@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent 复制命令
 // @namespace    localhost
-// @version      2.0.2
+// @version      2.0.3
 // @description  为 qBittorrent 右键菜单添加“复制完整路径”和“复制 UA 命令”选项，并支持可配置的路径映射。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina (由 Gemini 2.5 Pro  助理重构)
 // @icon         https://www.qbittorrent.org/favicon.ico
@@ -9,6 +9,8 @@
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd.user.js
 // @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd.user.js
 // @supportURL   https://github.com/akina-up/script/issues
+// @grant        GM_setValue
+// @grant        GM_getValue
 // ==/UserScript==
 
 (function() {
