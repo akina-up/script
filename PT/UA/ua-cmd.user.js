@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent 复制跳转脚本
 // @namespace    https://github.com/akina-up/script
-// @version      3.0.2
+// @version      3.0.3
 // @description  (由 Gemini 2.5 Pro 助理重构)为qB右键菜单添加高度可定制的复制/跳转命令, 支持拖放排序、层级子菜单、可视化图标选择、路径映射和模板, 保存无需刷新。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina
 // @icon         https://www.qbittorrent.org/favicon.ico
@@ -13,6 +13,24 @@
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // ==/UserScript==
+
+/* 更新日志
+ * v3.0.0
+ * - 1.添加二级目录
+ * - 2.可以设置跳转
+ * - 等等
+
+ * v3.0.1
+ * - 修复拖拽
+ 
+ * v3.0.2
+ * - 添加{comment}, {comment_num}
+ 
+ * v3.0.3
+ * - 修复拖拽
+ * 
+ */
+
 
 (function() {
     'use strict';
@@ -282,15 +300,23 @@
     }
 
     // ==========================================================
-    //  vvvvvvvvv   Drag and Drop Logic (FIXED)   vvvvvvvvv
+    //  vvvvvvvvv   拖放逻辑 (已优化)   vvvvvvvvv
     // ==========================================================
 
     function setupDragAndDrop() {
         const container = document.getElementById('qbit-groups-container');
         let draggedEl = null;
+        let mousedownTarget = null; // 用于存储鼠标按下的初始目标元素
+
+        // 使用捕获阶段的 mousedown 事件来确保在 dragstart 之前获取到点击的元素
+        container.addEventListener('mousedown', e => {
+            mousedownTarget = e.target;
+        }, true);
 
         container.addEventListener('dragstart', (e) => {
-            if (e.target.matches('input, select, textarea, button, a, .icon-picker-trigger')) {
+            // 核心优化：只允许在点击拖动句柄 (.drag-handle) 时开始拖动。
+            // 这可以防止在输入框内选择文本时，错误地触发整个元素的拖动。
+            if (!mousedownTarget || !mousedownTarget.closest('.drag-handle')) {
                 e.preventDefault();
                 return;
             }
@@ -316,6 +342,7 @@
                 placeholder.remove();
             }
             draggedEl = null;
+            mousedownTarget = null; // 重置目标元素
         });
 
         container.addEventListener('dragover', (e) => {
@@ -346,13 +373,13 @@
         });
     }
 
-
     function getDragPlaceholder() {
         let placeholder = document.getElementById('drag-placeholder');
         if (!placeholder) {
             placeholder = document.createElement('div');
             placeholder.id = 'drag-placeholder';
         }
+        // 根据被拖动的元素类型（命令卡片或分组）来调整占位符的样式
         if (document.querySelector('.qbit-command-group.dragging')) {
             placeholder.className = 'qbit-command-group';
         } else {
@@ -434,12 +461,8 @@
             const originalFullPath = `${cleanSavePath}/${data.name}`;
             const mappedFullPath = applyPathMapping(originalFullPath);
 
-            // ============================================
-            // vv START: 新增字段处理 vv
-            const commentText = data.comment || ''; // 获取注释，如果不存在则为空字符串
-            const commentNum = (commentText.match(/\d+/g) || []).join(''); // 提取注释中的所有数字
-            // ^^ END: 新增字段处理 ^^
-            // ============================================
+            const commentText = data.comment || '';
+            const commentNum = (commentText.match(/\d+/g) || []).join('');
 
             let result = command.template;
             const placeholders = {
@@ -450,8 +473,8 @@
                 '{hash}': hash,
                 '{category}': data.category,
                 '{tracker}': data.tracker,
-                '{comment}': commentText,      // 添加完整注释占位符
-                '{comment_num}': commentNum      // 添加纯数字注释占位符
+                '{comment}': commentText,
+                '{comment_num}': commentNum
             };
             for (const key in placeholders) { result = result.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), placeholders[key]); }
             return result;
