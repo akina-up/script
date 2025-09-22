@@ -6,8 +6,8 @@
 // @author       akina
 // @icon         https://www.qbittorrent.org/favicon.ico
 // @run-at       document-end
-// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd-refactored.user.js
-// @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd-refactored.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/UA/ua-cmd.user.js
 // @supportURL   https://github.com/akina-up/script/issues
 // @grant        GM_setValue
 // @grant        GM_getValue
