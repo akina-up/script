@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         qBittorrent 复制跳转脚本
-// @namespace    localhost
+// @namespace    https://github.com/akina-up/script
 // @version      3.0.0
 // @description  (由 Gemini 3.0.0 Pro 助理重构)为qB右键菜单添加高度可定制的复制/跳转命令, 支持拖放排序、层级子菜单、可视化图标选择、路径映射和模板, 保存无需刷新。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina
