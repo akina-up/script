@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent 复制跳转脚本
 // @namespace    https://github.com/akina-up/script
-// @version      3.0.0
+// @version      3.0.1
 // @description  (由 Gemini 3.0.0 Pro 助理重构)为qB右键菜单添加高度可定制的复制/跳转命令, 支持拖放排序、层级子菜单、可视化图标选择、路径映射和模板, 保存无需刷新。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina
 // @icon         https://www.qbittorrent.org/favicon.ico
@@ -78,7 +78,7 @@
 
     function showSettingsDialog() {
         if (document.getElementById('qbit-script-settings-overlay')) return;
-        
+
         const placeholders = '{name}, {save_path}, {full_path}, {full_path_mapped}, {hash}, {category}, {tracker}';
 
         document.body.insertAdjacentHTML('beforeend', `
@@ -151,8 +151,6 @@
         });
     }
 
-    // **FIXED**: The function that contained the critical syntax error.
-    // It's now rewritten to build the HTML parts separately and safely.
     function addCommandGroupUI(name, commands) {
         const isRoot = name === '';
         const title = isRoot ? '顶级菜单命令' : name;
@@ -165,7 +163,6 @@
         groupWrapper.draggable = !isRoot;
         groupWrapper.dataset.submenuName = name;
 
-        // Build the title and actions HTML safely first
         let titleHtml;
         if (isRoot) {
             titleHtml = `<h4>${title}</h4>`;
@@ -179,13 +176,12 @@
                 <input type="text" class="qbit-submenu-name-input">
             `;
         }
-        
+
         const actionsHtml = `
             <button class="qbit-btn qbit-btn-small qbit-add-command-btn">＋ 添加命令</button>
             ${isRoot ? '' : '<button class="qbit-btn qbit-btn-danger qbit-delete-group-btn">删除分组</button>'}
         `;
 
-        // Now, assemble the final innerHTML without nested template literals.
         groupWrapper.innerHTML = `
             <div class="qbit-group-header">
                 <div class="qbit-group-title">${titleHtml}</div>
@@ -193,7 +189,6 @@
             </div>
             <div class="qbit-group-commands"></div>`;
 
-        // Set values via properties after creation
         if (!isRoot) {
             groupWrapper.querySelector('.submenu-icon-value').value = submenuIcon;
             groupWrapper.querySelector('.qbit-submenu-name-input').value = title;
@@ -226,7 +221,7 @@
                  <label class="qbit-toggle-switch" title="启用/禁用"><input type="checkbox" class="cmd-enabled"><span></span></label>
                 <button class="qbit-delete-command" title="删除命令">✕</button>
             </div>`;
-        
+
         card.querySelector('.cmd-icon-preview img').src = `${iconsBaseUrl}${cmd?.icon || defaultIcon}`;
         card.querySelector('.cmd-icon-value').value = cmd?.icon || defaultIcon;
         card.querySelector('.cmd-name').value = cmd?.name || '';
@@ -287,7 +282,7 @@
     }
 
     // ==========================================================
-    //  vvvvvvvvv   Drag and Drop Logic   vvvvvvvvv
+    //  vvvvvvvvv   Drag and Drop Logic (FIXED)   vvvvvvvvv
     // ==========================================================
 
     function setupDragAndDrop() {
@@ -295,46 +290,81 @@
         let draggedEl = null;
 
         container.addEventListener('dragstart', (e) => {
-            if (!e.target.matches('.drag-handle')) { e.preventDefault(); return; }
+            // BUGFIX: The original check `!e.target.matches('.drag-handle')` was incorrect.
+            // The `e.target` of a dragstart event is the draggable element itself, not the handle child.
+            // This faulty check caused the drag to always be prevented.
+            // The new logic allows dragging from anywhere on the card/group except for interactive form elements,
+            // which prevents issues like being unable to select text in an input field.
+            if (e.target.matches('input, select, textarea, button, a, .icon-picker-trigger')) {
+                e.preventDefault();
+                return;
+            }
+
             draggedEl = e.target.closest('[draggable="true"]');
             if (!draggedEl) return;
+
+            // Set data for Firefox compatibility
             e.dataTransfer.effectAllowed = 'move';
-            setTimeout(() => draggedEl.classList.add('dragging'), 0);
+            e.dataTransfer.setData('text/plain', null);
+
+            // Add dragging class after a short delay to allow the browser to create the drag image
+            setTimeout(() => {
+                if (draggedEl) {
+                    draggedEl.classList.add('dragging');
+                }
+            }, 0);
         });
 
         container.addEventListener('dragend', () => {
             if (!draggedEl) return;
             draggedEl.classList.remove('dragging');
             const placeholder = getDragPlaceholder();
-            if(placeholder.parentElement) placeholder.remove();
+            if (placeholder.parentElement) {
+                placeholder.remove();
+            }
             draggedEl = null;
         });
 
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
             if (!draggedEl) return;
+
             const dropZone = e.target.closest('.qbit-group-commands, #qbit-groups-container');
             if (!dropZone) return;
+
             const afterElement = getDragAfterElement(dropZone, e.clientY);
             const placeholder = getDragPlaceholder();
-            if (afterElement == null) { dropZone.appendChild(placeholder); }
-            else { dropZone.insertBefore(placeholder, afterElement); }
+            if (afterElement == null) {
+                dropZone.appendChild(placeholder);
+            } else {
+                dropZone.insertBefore(placeholder, afterElement);
+            }
         });
 
         container.addEventListener('drop', (e) => {
             e.preventDefault();
-            if(!draggedEl) return;
+            if (!draggedEl) return;
+
             const placeholder = getDragPlaceholder();
-            if (placeholder.parentElement) placeholder.parentElement.insertBefore(draggedEl, placeholder);
-            placeholder.remove();
+            if (placeholder.parentElement) {
+                placeholder.parentElement.insertBefore(draggedEl, placeholder);
+                placeholder.remove();
+            }
         });
     }
+
 
     function getDragPlaceholder() {
         let placeholder = document.getElementById('drag-placeholder');
         if (!placeholder) {
             placeholder = document.createElement('div');
             placeholder.id = 'drag-placeholder';
+        }
+        // Check what kind of element is being dragged to apply the correct placeholder style
+        if (document.querySelector('.qbit-command-group.dragging')) {
+            placeholder.className = 'qbit-command-group';
+        } else {
+             placeholder.className = '';
         }
         return placeholder;
     }
@@ -344,8 +374,11 @@
         return draggableElements.reduce((closest, child) => {
             const box = child.getBoundingClientRect();
             const offset = y - box.top - box.height / 2;
-            if (offset < 0 && offset > closest.offset) { return { offset: offset, element: child }; }
-            else { return closest; }
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
@@ -524,11 +557,13 @@
             #qbit-script-settings-dialog input, #qbit-script-settings-dialog textarea, #qbit-script-settings-dialog select { width: 100%; padding: 10px; border: 1px solid var(--qb-border); border-radius: 6px; font-size: 14px; background: var(--qb-surface); }
             .qbit-card-actions-col { display: flex; align-items: center; gap: 16px; }
             .qbit-delete-command { background: #fbe9e7; color: var(--qb-danger); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-weight: bold; }
-            
+
             .drag-handle { cursor: grab; color: #aaa; padding: 0 8px; font-size: 20px; align-self: stretch; display: flex; align-items: center; }
             .dragging { opacity: 0.5; background: #e3f2fd; }
-            #drag-placeholder { height: 50px; background: #e3f2fd; border: 2px dashed #90caf9; border-radius: 6px; margin: 6px 0; }
-            .qbit-command-group#drag-placeholder { height: 100px; }
+            #drag-placeholder { background: #e3f2fd; border: 2px dashed #90caf9; border-radius: 6px; margin: 6px 0; }
+            #drag-placeholder:not(.qbit-command-group) { height: 50px; }
+            #drag-placeholder.qbit-command-group { min-height: 100px; }
+
 
             .qbit-settings-footer { text-align: right; padding: 16px 24px; border-top: 1px solid var(--qb-border); background: #fcfcfc; }
             .qbit-btn { padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; background: white; }
@@ -538,14 +573,14 @@
             .qbit-btn-primary:hover { background: var(--qb-primary-hover); }
             .qbit-btn-danger { background: var(--qb-surface); color: var(--qb-danger); border-color: var(--qb-danger); }
             .qbit-btn-danger:hover { background: var(--qb-danger); color: white; }
-            
+
             .qbit-toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; }
             .qbit-toggle-switch input { opacity: 0; width: 0; height: 0; }
             .qbit-toggle-switch span { position: absolute; cursor: pointer; inset: 0; background-color: #ccc; border-radius: 22px; transition: .4s; }
             .qbit-toggle-switch span:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: .4s; }
             .qbit-toggle-switch input:checked + span { background-color: var(--qb-primary); }
             .qbit-toggle-switch input:checked + span:before { transform: translateX(18px); }
-            
+
             #qbit-icon-picker-panel { display: none; position: absolute; z-index: 10001; background: var(--qb-surface); border-radius: 8px; box-shadow: var(--qb-shadow); padding: 10px; grid-template-columns: repeat(6, 1fr); gap: 8px; max-width: 280px; }
             #qbit-icon-picker-panel img { width: 32px; height: 32px; padding: 4px; cursor: pointer; border-radius: 4px; transition: background 0.2s; }
             #qbit-icon-picker-panel img:hover { background: #f0f0f0; }
