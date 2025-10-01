@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent 复制跳转脚本
 // @namespace    https://github.com/akina-up/script
-// @version      3.0.3
+// @version      3.0.4
 // @description  (由 Gemini 2.5 Pro 助理重构)为qB右键菜单添加高度可定制的复制/跳转命令, 支持拖放排序、层级子菜单、可视化图标选择、路径映射和模板, 保存无需刷新。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina
 // @icon         https://www.qbittorrent.org/favicon.ico
@@ -15,20 +15,23 @@
 // ==/UserScript==
 
 /* 更新日志
+ * v3.0.4
+ * - 1.为跳转功能添加可以通过不同tracker设置不同网址
+ * - 2.添加占位符 {comment_url} 用于提取注释中的url
+ *
+ * v3.0.3
+ * - 修复文本框拖拽
+ *
+ * v3.0.2
+ * - 添加{comment}, {comment_num}
+ *
+ * v3.0.1
+ * - 修复拖拽
+ *
  * v3.0.0
  * - 1.添加二级目录
  * - 2.可以设置跳转
  * - 等等
-
- * v3.0.1
- * - 修复拖拽
- 
- * v3.0.2
- * - 添加{comment}, {comment_num}
- 
- * v3.0.3
- * - 修复拖拽
- * 
  */
 
 
@@ -60,7 +63,14 @@
         commands: [
             { id: `cmd-${Date.now()}-1`, name: '复制完整路径', type: 'copy', icon: 'edit-copy.svg', template: '{full_path_mapped}', submenu: '', enabled: true },
             { id: `cmd-${Date.now()}-3`, name: '复制 UA 命令', type: 'copy', icon: 'upload.svg', template: 'upload "{full_path_mapped}"', submenu: '复制命令', enabled: true },
-            { id: `cmd-${Date.now()}-4`, name: '在资源站搜索', type: 'open', icon: 'set-location.svg', template: 'https://xxxx.com/torrents.php?searchstr={name}', submenu: '跳转链接', enabled: true }
+            {
+                id: `cmd-${Date.now()}-4`, name: '在资源站搜索', type: 'open', icon: 'set-location.svg',
+                template: 'https://xxxx.com/torrents.php?searchstr={name}', // 默认模板
+                trackerTemplates: { // 针对特定 tracker 的模板
+                    "another-site.org": "https://another-site.org/details.php?id={comment_num}"
+                },
+                submenu: '跳转链接', enabled: true
+            }
         ]
     };
 
@@ -94,10 +104,25 @@
         } catch (e) { console.error("qBit脚本: 保存配置失败", e); }
     }
 
+    function getUniqueTrackers() {
+        if (typeof torrentsTable === 'undefined') return [];
+        const allRows = torrentsTable.getFilteredAndSortedRows();
+        const trackerHostnames = new Set();
+        for (const hash in allRows) {
+            const tracker = allRows[hash]?.full_data?.tracker;
+            if (tracker) {
+                try {
+                    const url = new URL(tracker);
+                    trackerHostnames.add(url.hostname);
+                } catch (e) { /* 忽略 dht, pex 等无效URL */ }
+            }
+        }
+        return [...trackerHostnames].sort();
+    }
+
     function showSettingsDialog() {
         if (document.getElementById('qbit-script-settings-overlay')) return;
-        // 在此处添加新的占位符
-        const placeholders = '{name}, {save_path}, {full_path}, {full_path_mapped}, {hash}, {category}, {tracker}, {comment}, {comment_num}';
+        const placeholders = '{name}, {save_path}, {full_path}, {full_path_mapped}, {hash}, {category}, {tracker}, {comment}, {comment_num}, {comment_url}';
 
         document.body.insertAdjacentHTML('beforeend', `
             <div id="qbit-script-settings-overlay">
@@ -120,6 +145,15 @@
                     <div class="qbit-settings-footer"><button id="qbit-settings-save" class="qbit-btn qbit-btn-primary">保存设置</button></div>
                 </div>
             </div>`);
+
+        const availableTrackers = getUniqueTrackers();
+        if (availableTrackers.length > 0) {
+            const datalist = document.createElement('datalist');
+            datalist.id = 'qbit-tracker-list';
+            datalist.innerHTML = availableTrackers.map(t => `<option value="${t}"></option>`).join('');
+            document.getElementById('qbit-script-settings-dialog').appendChild(datalist);
+        }
+
         createIconPickerPanel();
         document.getElementById('qbit-settings-enable-mapping').checked = currentConfig.isPathMappingEnabled;
         document.getElementById('qbit-settings-mappings').value = JSON.stringify(currentConfig.pathMappings, null, 4);
@@ -145,6 +179,8 @@
         else if (e.target.classList.contains('qbit-delete-group-btn')) {
             if (confirm("确定要删除这个二级菜单及其所有命令吗？")) e.target.closest('.qbit-command-group').remove();
         }
+        else if (e.target.classList.contains('qbit-add-tracker-template-btn')) addTrackerTemplateUI(e.target.previousElementSibling);
+        else if (e.target.classList.contains('qbit-delete-tracker-row')) e.target.closest('.qbit-tracker-template-row').remove();
         else if (e.target.closest('.icon-picker-trigger')) openIconPicker(e.target.closest('.icon-picker-trigger'));
         else if (e.target.id === 'qbit-settings-save') handleSave();
         else if (e.target.id === 'qbit-settings-close') closeDialog();
@@ -233,7 +269,9 @@
                     <input type="text" class="cmd-name" placeholder="菜单名称">
                     <select class="cmd-type"><option value="copy">复制</option><option value="open">跳转</option></select>
                 </div>
-                <div class="qbit-form-group"><input type="text" class="cmd-template" placeholder="命令/链接模板"></div>
+                <div class="qbit-form-group"><input type="text" class="cmd-template" placeholder="默认 命令/链接模板"></div>
+                <div class="cmd-tracker-templates-container"></div>
+                <button class="qbit-btn qbit-btn-small qbit-add-tracker-template-btn">＋ 添加站点特定网址</button>
             </div>
             <div class="qbit-card-actions-col">
                  <label class="qbit-toggle-switch" title="启用/禁用"><input type="checkbox" class="cmd-enabled"><span></span></label>
@@ -243,12 +281,41 @@
         card.querySelector('.cmd-icon-preview img').src = `${iconsBaseUrl}${cmd?.icon || defaultIcon}`;
         card.querySelector('.cmd-icon-value').value = cmd?.icon || defaultIcon;
         card.querySelector('.cmd-name').value = cmd?.name || '';
-        card.querySelector('.cmd-type').value = cmd?.type || 'copy';
+        const typeSelect = card.querySelector('.cmd-type');
+        typeSelect.value = cmd?.type || 'copy';
         card.querySelector('.cmd-template').value = cmd?.template || '';
         card.querySelector('.cmd-enabled').checked = !cmd || cmd.enabled;
 
+        const trackerContainer = card.querySelector('.cmd-tracker-templates-container');
+        const addTrackerBtn = card.querySelector('.qbit-add-tracker-template-btn');
+        const toggleTrackerUI = () => {
+            const isVisible = typeSelect.value === 'open';
+            trackerContainer.style.display = isVisible ? 'block' : 'none';
+            addTrackerBtn.style.display = isVisible ? 'inline-block' : 'none';
+        };
+        typeSelect.addEventListener('change', toggleTrackerUI);
+
+        if (cmd?.type === 'open' && cmd.trackerTemplates) {
+            for (const tracker in cmd.trackerTemplates) {
+                addTrackerTemplateUI(trackerContainer, tracker, cmd.trackerTemplates[tracker]);
+            }
+        }
+        toggleTrackerUI();
+
         container.appendChild(card);
     }
+
+    function addTrackerTemplateUI(container, key = '', value = '') {
+        const row = document.createElement('div');
+        row.className = 'qbit-tracker-template-row';
+        row.innerHTML = `
+            <input type="text" class="qbit-tracker-key" placeholder="Tracker域名 (e.g. site.com)" value="${key}" list="qbit-tracker-list">
+            <input type="text" class="qbit-tracker-value" placeholder="该站点的URL模板" value="${value}">
+            <button class="qbit-delete-tracker-row" title="删除此规则">－</button>
+        `;
+        container.appendChild(row);
+    }
+
 
     async function handleSave() {
         let newMappings;
@@ -270,11 +337,24 @@
             group.querySelectorAll('.qbit-command-card').forEach(card => {
                 const name = card.querySelector('.cmd-name').value.trim();
                 if (!name) return;
-                newCommands.push({
+
+                const commandData = {
                     id: card.dataset.id, enabled: card.querySelector('.cmd-enabled').checked, name: name,
                     type: card.querySelector('.cmd-type').value, icon: card.querySelector('.cmd-icon-value').value,
                     submenu: submenuName, template: card.querySelector('.cmd-template').value
-                });
+                };
+
+                if (commandData.type === 'open') {
+                    commandData.trackerTemplates = {};
+                    card.querySelectorAll('.qbit-tracker-template-row').forEach(row => {
+                        const key = row.querySelector('.qbit-tracker-key').value.trim();
+                        const value = row.querySelector('.qbit-tracker-value').value.trim();
+                        if (key && value) {
+                            commandData.trackerTemplates[key] = value;
+                        }
+                    });
+                }
+                newCommands.push(commandData);
             });
         });
 
@@ -306,65 +386,45 @@
     function setupDragAndDrop() {
         const container = document.getElementById('qbit-groups-container');
         let draggedEl = null;
-        let mousedownTarget = null; // 用于存储鼠标按下的初始目标元素
+        let mousedownTarget = null;
 
-        // 使用捕获阶段的 mousedown 事件来确保在 dragstart 之前获取到点击的元素
-        container.addEventListener('mousedown', e => {
-            mousedownTarget = e.target;
-        }, true);
+        container.addEventListener('mousedown', e => { mousedownTarget = e.target; }, true);
 
         container.addEventListener('dragstart', (e) => {
-            // 核心优化：只允许在点击拖动句柄 (.drag-handle) 时开始拖动。
-            // 这可以防止在输入框内选择文本时，错误地触发整个元素的拖动。
             if (!mousedownTarget || !mousedownTarget.closest('.drag-handle')) {
                 e.preventDefault();
                 return;
             }
-
             draggedEl = e.target.closest('[draggable="true"]');
             if (!draggedEl) return;
-
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', null);
-
-            setTimeout(() => {
-                if (draggedEl) {
-                    draggedEl.classList.add('dragging');
-                }
-            }, 0);
+            setTimeout(() => { if (draggedEl) { draggedEl.classList.add('dragging'); } }, 0);
         });
 
         container.addEventListener('dragend', () => {
             if (!draggedEl) return;
             draggedEl.classList.remove('dragging');
             const placeholder = getDragPlaceholder();
-            if (placeholder.parentElement) {
-                placeholder.remove();
-            }
+            if (placeholder.parentElement) { placeholder.remove(); }
             draggedEl = null;
-            mousedownTarget = null; // 重置目标元素
+            mousedownTarget = null;
         });
 
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
             if (!draggedEl) return;
-
             const dropZone = e.target.closest('.qbit-group-commands, #qbit-groups-container');
             if (!dropZone) return;
-
             const afterElement = getDragAfterElement(dropZone, e.clientY);
             const placeholder = getDragPlaceholder();
-            if (afterElement == null) {
-                dropZone.appendChild(placeholder);
-            } else {
-                dropZone.insertBefore(placeholder, afterElement);
-            }
+            if (afterElement == null) { dropZone.appendChild(placeholder); }
+            else { dropZone.insertBefore(placeholder, afterElement); }
         });
 
         container.addEventListener('drop', (e) => {
             e.preventDefault();
             if (!draggedEl) return;
-
             const placeholder = getDragPlaceholder();
             if (placeholder.parentElement) {
                 placeholder.parentElement.insertBefore(draggedEl, placeholder);
@@ -379,12 +439,8 @@
             placeholder = document.createElement('div');
             placeholder.id = 'drag-placeholder';
         }
-        // 根据被拖动的元素类型（命令卡片或分组）来调整占位符的样式
-        if (document.querySelector('.qbit-command-group.dragging')) {
-            placeholder.className = 'qbit-command-group';
-        } else {
-             placeholder.className = '';
-        }
+        if (document.querySelector('.qbit-command-group.dragging')) { placeholder.className = 'qbit-command-group'; }
+        else { placeholder.className = ''; }
         return placeholder;
     }
 
@@ -393,11 +449,8 @@
         return draggableElements.reduce((closest, child) => {
             const box = child.getBoundingClientRect();
             const offset = y - box.top - box.height / 2;
-            if (offset < 0 && offset > closest.offset) {
-                return { offset: offset, element: child };
-            } else {
-                return closest;
-            }
+            if (offset < 0 && offset > closest.offset) { return { offset: offset, element: child }; }
+            else { return closest; }
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
@@ -409,12 +462,10 @@
     function createMenuItems() {
         const menu = document.getElementById('torrentsTableMenu');
         if (!menu) return;
-
         const commandElementsToBind = [];
         let menuHtml = '';
         const enabledCommands = currentConfig.commands.filter(c => c.enabled);
         if (enabledCommands.length > 0) menuHtml += `<li class="separator qbit-script-menu-item"></li>`;
-
         const submenusRendered = new Set();
         enabledCommands.forEach(cmd => {
             if (cmd.submenu) {
@@ -436,10 +487,8 @@
                 commandElementsToBind.push(cmd);
             }
         });
-
         menuHtml += `<li class="separator qbit-script-menu-item"></li><li class="qbit-script-menu-item"><a id="openQbitScriptSettings" href="#"><img alt="设置" src="${iconsBaseUrl}configure.svg"> 脚本设置</a></li>`;
         menu.insertAdjacentHTML('beforeend', menuHtml);
-
         commandElementsToBind.forEach(cmd => {
             document.getElementById(cmd.id)?.addEventListener('click', (e) => { e.preventDefault(); executeCommand(cmd.id); });
         });
@@ -463,8 +512,24 @@
 
             const commentText = data.comment || '';
             const commentNum = (commentText.match(/\d+/g) || []).join('');
+            const commentUrlMatch = commentText.match(/(https?:\/\/[^\s]+)/);
+            const commentUrl = commentUrlMatch ? commentUrlMatch[0] : '';
 
-            let result = command.template;
+
+            let resultTemplate = command.template;
+            if (command.type === 'open' && command.trackerTemplates && data.tracker) {
+                try {
+                    const trackerDomain = new URL(data.tracker).hostname;
+                    const matchingTrackerKey = Object.keys(command.trackerTemplates).find(key => trackerDomain.includes(key));
+                    if (matchingTrackerKey) {
+                        resultTemplate = command.trackerTemplates[matchingTrackerKey];
+                    }
+                } catch (e) {
+                    console.warn("无法解析tracker URL:", data.tracker);
+                }
+            }
+
+            let result = resultTemplate;
             const placeholders = {
                 '{name}': data.name,
                 '{save_path}': data.save_path,
@@ -474,7 +539,8 @@
                 '{category}': data.category,
                 '{tracker}': data.tracker,
                 '{comment}': commentText,
-                '{comment_num}': commentNum
+                '{comment_num}': commentNum,
+                '{comment_url}': commentUrl
             };
             for (const key in placeholders) { result = result.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), placeholders[key]); }
             return result;
@@ -574,9 +640,9 @@
             .qbit-group-actions { display: flex; gap: 8px; }
             .qbit-group-commands { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
-            .qbit-command-card { display: flex; gap: 12px; align-items: center; padding: 8px; border: 1px solid transparent; border-radius: 6px; }
-            .icon-picker-trigger { cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
-            .cmd-icon-preview { width: 40px; height: 40px; border-radius: 6px; background: #f0f0f0; }
+            .qbit-command-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid transparent; border-radius: 6px; }
+            .icon-picker-trigger { cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; margin-top: 4px; }
+            .cmd-icon-preview { width: 40px; height: 40px; border-radius: 6px; background: #f0f0f0; flex-shrink: 0; }
             .cmd-icon-preview:hover { background: #e0e0e0; }
             .cmd-icon-preview img { width: 24px; height: 24px; }
             .submenu-icon-preview { width: 30px; height: 30px; border-radius: 50%; background: #e8eaf6; }
@@ -586,15 +652,22 @@
             .qbit-card-fields-col { flex: 1; display: flex; flex-direction: column; gap: 8px; }
             .qbit-form-group { display: flex; gap: 8px; }
             #qbit-script-settings-dialog input, #qbit-script-settings-dialog textarea, #qbit-script-settings-dialog select { width: 100%; padding: 10px; border: 1px solid var(--qb-border); border-radius: 6px; font-size: 14px; background: var(--qb-surface); }
-            .qbit-card-actions-col { display: flex; align-items: center; gap: 16px; }
-            .qbit-delete-command { background: #fbe9e7; color: var(--qb-danger); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-weight: bold; }
+            .qbit-card-actions-col { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
+            .qbit-delete-command { background: #fbe9e7; color: var(--qb-danger); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
+
+            .cmd-tracker-templates-container { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 6px; }
+            .qbit-tracker-template-row { display: flex; gap: 6px; align-items: center; }
+            .qbit-tracker-template-row input { font-size: 12px; padding: 6px 8px; }
+            .qbit-tracker-key { flex: 1; }
+            .qbit-tracker-value { flex: 2; }
+            .qbit-delete-tracker-row { background: #ffebee; color: #c62828; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
+            .qbit-add-tracker-template-btn { align-self: flex-start; margin-top: 4px; }
 
             .drag-handle { cursor: grab; color: #aaa; padding: 0 8px; font-size: 20px; align-self: stretch; display: flex; align-items: center; }
             .dragging { opacity: 0.5; background: #e3f2fd; }
-            #drag-placeholder { background: #e3f2fd; border: 2px dashed #90caf9; border-radius: 6px; margin: 6px 0; }
-            #drag-placeholder:not(.qbit-command-group) { height: 50px; }
+            #drag-placeholder { background: #e3f2fd; border: 2px dashed #90caf9; border-radius: 6px; margin: 12px 0; }
+            #drag-placeholder:not(.qbit-command-group) { min-height: 60px; }
             #drag-placeholder.qbit-command-group { min-height: 100px; }
-
 
             .qbit-settings-footer { text-align: right; padding: 16px 24px; border-top: 1px solid var(--qb-border); background: #fcfcfc; }
             .qbit-btn { padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; background: white; }
