@@ -1,19 +1,20 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.0
+// @version      1.0.1
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
 // @match        http*://*/details.php*
 // @match        http*://*/edit.php*
 // @match        http*://*/torrents.php*
-// @match        http*://*/index.php*
+// @match        https://kp.m-team.cc/*
+// @match        https://*/torrents*
+// @match        https://totheglory.im/t/*
 // @connect      *
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/upload/PT-Auto-Seeder.user.js
 // @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/upload/PT-Auto-Seeder.user.js
 // @supportURL   https://github.com/akina-up/script/issues
-// @grant        GM_setValue
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_xmlhttpRequest
@@ -23,11 +24,21 @@
 // @run-at       document-end
 // ==/UserScript==
 
-
 /* 更新日志
+ * v1.0.1
+ * - [新增] 支持U3D
+ * - [新增] “强制推送”按钮，可手动触发推送
+ * - [新增] “快速操作”按钮，用于快速发布/编辑/保存
+ * - [新增] 独立的推送记录悬浮窗
+ * - [新增] 设置项：推送排除列表
+ * - [新增] 设置项：悬浮图标大小调整
+ * - [优化] 推送状态通知栏不再自动消失
+ * - [优化] 删除折叠的推送记录时，会删除组内所有条目
+ * - [优化] qB密码框改为文本类型
  * v1.0.0
  * -试运行
  */
+ 
 (function() {
     'use strict';
 
@@ -40,11 +51,16 @@
         SITES: 'pt_aas_site_configs',
         HISTORY: 'pt_aas_history_', // prefix
         UI_POS: 'pt_aas_ui_position',
-        UI_OPEN: 'pt_aas_ui_is_open'
+        SETTINGS_UI_OPEN: 'pt_aas_settings_ui_is_open',
+        HISTORY_UI_POS: 'pt_aas_history_ui_position',
+        HISTORY_UI_OPEN: 'pt_aas_history_ui_is_open',
+        EXCLUDED_URLS: 'pt_aas_excluded_urls',
+        ICON_SCALE: 'pt_aas_icon_scale'
     };
 
-    const UI_ID = 'pt-aas-sidebar-container';
-    const TOGGLE_ICON_ID = 'pt-aas-toggle-icon';
+    const ICON_CONTAINER_ID = 'pt-aas-icon-container';
+    const SETTINGS_UI_ID = 'pt-aas-settings-ui';
+    const HISTORY_UI_ID = 'pt-aas-history-ui';
     const STATUS_BAR_ID = 'pt-aas-status-bar';
 
     // ===========================
@@ -54,7 +70,7 @@
         getQBs: () => GM_getValue(STORAGE_KEYS.QBS, []),
         setQBs: (list) => GM_setValue(STORAGE_KEYS.QBS, list),
         getActiveQbId: () => GM_getValue(STORAGE_KEYS.ACTIVE_QB, null),
-        setActiveQbId: (id) => { GM_setValue(STORAGE_KEYS.ACTIVE_QB, id); UI.renderDefaultStatus(); },
+        setActiveQbId: (id) => { GM_setValue(STORAGE_KEYS.ACTIVE_QB, id); },
         getActiveQb: () => {
             const qbs = Data.getQBs();
             const activeId = Data.getActiveQbId();
@@ -71,19 +87,35 @@
         },
         deleteHistoryEntry: (qbId, timestamp) => {
             let hist = Data.getHistory(qbId);
-            const ts = Number(timestamp);
-            hist = hist.filter(entry => entry.time !== ts);
+            hist = hist.filter(entry => entry.time !== Number(timestamp));
             GM_setValue(STORAGE_KEYS.HISTORY + qbId, hist);
+        },
+        deleteHistoryGroup: (qbId, name) => {
+             if (!confirm(`确定要删除所有名为 "${name}" 的推送记录吗？`)) return false;
+            let hist = Data.getHistory(qbId);
+            hist = hist.filter(entry => entry.name !== name);
+            GM_setValue(STORAGE_KEYS.HISTORY + qbId, hist);
+            return true;
         },
         clearHistory: (qbId) => {
             const qbName = (Data.getQBs().find(q => q.id === qbId) || {}).name || 'Unknown';
             if (!confirm(`确定要清除qB "${qbName}" 的所有推送记录吗？\n此操作无法撤销。`)) return;
             GM_setValue(STORAGE_KEYS.HISTORY + qbId, []);
         },
-        getUIPos: () => GM_getValue(STORAGE_KEYS.UI_POS, { top: '100px', left: '10px' }),
-        setUIPos: (pos) => GM_setValue(STORAGE_KEYS.UI_POS, pos),
-        isUIOpen: () => GM_getValue(STORAGE_KEYS.UI_OPEN, false),
-        setUIOpen: (isOpen) => GM_setValue(STORAGE_KEYS.UI_OPEN, isOpen)
+        getIconPos: () => GM_getValue(STORAGE_KEYS.UI_POS, { top: '100px', left: '10px' }),
+        setIconPos: (pos) => GM_setValue(STORAGE_KEYS.UI_POS, pos),
+        getSettingsUIPos: () => GM_getValue(STORAGE_KEYS.SETTINGS_UI_POS, { top: '100px', left: '60px' }),
+        setSettingsUIPos: (pos) => GM_setValue(STORAGE_KEYS.SETTINGS_UI_POS, pos),
+        isSettingsUIOpen: () => GM_getValue(STORAGE_KEYS.SETTINGS_UI_OPEN, false),
+        setSettingsUIOpen: (isOpen) => GM_setValue(STORAGE_KEYS.SETTINGS_UI_OPEN, isOpen),
+        getHistoryUIPos: () => GM_getValue(STORAGE_KEYS.HISTORY_UI_POS, { top: '150px', left: '80px' }),
+        setHistoryUIPos: (pos) => GM_setValue(STORAGE_KEYS.HISTORY_UI_POS, pos),
+        isHistoryUIOpen: () => GM_getValue(STORAGE_KEYS.HISTORY_UI_OPEN, false),
+        setHistoryUIOpen: (isOpen) => GM_setValue(STORAGE_KEYS.HISTORY_UI_OPEN, isOpen),
+        getExcludedUrls: () => GM_getValue(STORAGE_KEYS.EXCLUDED_URLS, ''),
+        setExcludedUrls: (urls) => GM_setValue(STORAGE_KEYS.EXCLUDED_URLS, urls),
+        getIconScale: () => GM_getValue(STORAGE_KEYS.ICON_SCALE, 100),
+        setIconScale: (scale) => GM_setValue(STORAGE_KEYS.ICON_SCALE, scale),
     };
 
     // ===========================
@@ -117,8 +149,8 @@
                     method: "POST", url: `${this.baseUrl}/api/v2/auth/login`,
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
                     data: `username=${encodeURIComponent(this.config.user)}&password=${encodeURIComponent(this.config.pass)}`,
-                    onload: (res) => (res.responseText === "Ok." || res.status === 200) ? resolve(true) : reject(`登录失败: ${res.status} ${res.responseText}`),
-                    onerror: (err) => reject(`登录网络错误: ${err}`)
+                    onload: (res) => (res.responseText.trim() === "Ok.") ? resolve(true) : reject(`登录失败: ${res.status}`),
+                    onerror: (err) => reject(`登录网络错误: ${JSON.stringify(err)}`)
                 });
             });
         }
@@ -128,7 +160,7 @@
                 const formData = new FormData();
                 formData.append("torrents", torrentBlob, "torrent.torrent");
                 if (this.config.path) formData.append("savepath", this.config.path);
-                if (this.config.category) formData.append("category", this.config.category);
+                if (this.config.cat) formData.append("category", this.config.cat);
                 formData.append("skip_checking", "true"); formData.append("paused", "false");
                 if (siteSettings) {
                     if (siteSettings.upLimit) formData.append("upLimit", Utils.mibToBytes(siteSettings.upLimit));
@@ -136,8 +168,8 @@
                 }
                 GM_xmlhttpRequest({
                     method: "POST", url: `${this.baseUrl}/api/v2/torrents/add`, data: formData,
-                    onload: (res) => resolve(res.status === 200 ? { success: true } : { success: false, message: `添加失败 (${res.status}): ${res.responseText}` }),
-                    onerror: (err) => resolve({ success: false, message: `添加网络错误: ${err}` })
+                    onload: (res) => resolve(res.status === 200 && res.responseText.trim() === 'Ok.' ? { success: true } : { success: false, message: `添加失败 (${res.status}): ${res.responseText}` }),
+                    onerror: (err) => resolve({ success: false, message: `添加网络错误: ${JSON.stringify(err)}` })
                 });
             });
         }
@@ -153,29 +185,32 @@
             --pt-aas-border: #444; --pt-aas-input-bg: #2c2c32; --pt-aas-info-bg: #2980b9;
         }
         #${STATUS_BAR_ID} {
-            position: fixed; top: 0; left: 0; right: 0; height: 28px; padding: 0 15px; font-size: 12px; color: white;
+            position: fixed; top: 0; left: 0; right: 0; height: 28px; padding: 0 15px; font-size: 14px; color: white;
             z-index: 10000; box-shadow: 0 1px 5px rgba(0,0,0,0.2); justify-content: center; align-items: center;
-            transition: background-color 0.3s;
-            /* [MODIFIED] Hide by default */
-            display: none;
+            transition: background-color 0.3s; display: none;
         }
         #${STATUS_BAR_ID}.info { background-color: var(--pt-aas-info-bg); }
         #${STATUS_BAR_ID}.success { background-color: var(--pt-aas-success); }
         #${STATUS_BAR_ID}.error { background-color: var(--pt-aas-danger); }
         #${STATUS_BAR_ID}.loading { background-color: var(--pt-aas-warning); }
-        #${TOGGLE_ICON_ID} {
-            position: fixed; width: 40px; height: 40px; background: var(--pt-aas-accent); color: white; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 9998;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3); font-size: 20px; transition: transform 0.3s; user-select: none;
+        #${ICON_CONTAINER_ID} {
+            position: fixed; display: flex; flex-direction: column; gap: 8px; z-index: 9998; user-select: none;
         }
-        #${TOGGLE_ICON_ID}:hover { transform: scale(1.1); }
-        #${UI_ID} {
-            position: fixed; width: 380px; max-height: calc(90vh - 40px); top: 40px; background: var(--pt-aas-bg); color: var(--pt-aas-text); z-index: 9999;
+        .pt-aas-action-icon {
+             width: 40px; height: 40px; background: var(--pt-aas-accent); color: white; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); font-size: 20px; transition: all 0.2s ease-in-out;
+        }
+        .pt-aas-action-icon:hover { transform: scale(1.15); background-color: var(--pt-aas-accent-hover); }
+        #pt-aas-toggle-icon { background-color: #7f8c8d; }
+        #pt-aas-toggle-icon:hover { background-color: #95a5a6; }
+        .pt-aas-panel {
+            position: fixed; width: 380px; max-height: calc(90vh - 40px); background: var(--pt-aas-bg); color: var(--pt-aas-text); z-index: 9999;
             border-radius: 8px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; backdrop-filter: blur(5px);
             border: 1px solid var(--pt-aas-border); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             font-size: 13px; transition: opacity 0.3s, transform 0.3s;
         }
-        #${UI_ID}.hidden { opacity: 0; pointer-events: none; transform: translateX(-20px); }
+        .pt-aas-panel.hidden { opacity: 0; pointer-events: none; transform: translateX(-20px); }
         .pt-aas-header { padding: 12px 15px; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--pt-aas-border); font-weight: bold; font-size: 15px; cursor: move; display: flex; justify-content: space-between; align-items: center; border-radius: 8px 8px 0 0; }
         .pt-aas-close-btn { cursor: pointer; padding: 4px; }
         .pt-aas-content { padding: 15px; overflow-y: auto; flex: 1; }
@@ -186,8 +221,9 @@
         .pt-aas-section.collapsed .pt-aas-sec-title::after { transform: rotate(-90deg); }
         .pt-aas-sec-body { padding: 12px; display: block;} .pt-aas-section.collapsed .pt-aas-sec-body { display: none; }
         .pt-aas-form-group { margin-bottom: 10px; } .pt-aas-form-group label { display: block; margin-bottom: 4px; color: var(--pt-aas-text-sub); }
-        .pt-aas-input { width: 100%; box-sizing: border-box; padding: 8px; background: var(--pt-aas-input-bg); border: 1px solid var(--pt-aas-border); color: var(--pt-aas-text); border-radius: 4px; }
-        .pt-aas-input:focus { outline: 1px solid var(--pt-aas-accent); border-color: var(--pt-aas-accent); }
+        .pt-aas-input, .pt-aas-textarea { width: 100%; box-sizing: border-box; padding: 8px; background: var(--pt-aas-input-bg); border: 1px solid var(--pt-aas-border); color: var(--pt-aas-text); border-radius: 4px; }
+        .pt-aas-textarea { min-height: 80px; resize: vertical; }
+        .pt-aas-input:focus, .pt-aas-textarea:focus { outline: 1px solid var(--pt-aas-accent); border-color: var(--pt-aas-accent); }
         .pt-aas-btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; background: #555; color: white; transition: background 0.2s; }
         .pt-aas-btn.primary { background: var(--pt-aas-accent); } .pt-aas-btn.primary:hover { background: var(--pt-aas-accent-hover); }
         .pt-aas-btn.danger { background: var(--pt-aas-danger); } .pt-aas-btn.small { padding: 4px 8px; font-size: 11px; }
@@ -199,15 +235,17 @@
         .pt-aas-toggle-btn::before { content: 'OFF'; } .pt-aas-toggle-btn.on::before { content: 'ON'; }
         .pt-aas-table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
         .pt-aas-table th { text-align: left; color: var(--pt-aas-text-sub); padding: 4px; border-bottom: 1px solid var(--pt-aas-border); }
-        .pt-aas-table th:nth-child(1) { width: 40%; } .pt-aas-table th:nth-child(4) { width: 12%; text-align: center; }
+        .pt-aas-table th:nth-child(1) { width: 40%; } .pt-aas-table th:nth-child(4) { width: 15%; text-align: center; }
         .pt-aas-table td { padding: 6px 4px; border-bottom: 1px solid #333; vertical-align: top; word-break: break-all; }
         .pt-aas-table td:nth-child(4) { text-align: center; }
         .pt-aas-table-site a { color: var(--pt-aas-accent); text-decoration: none; } .pt-aas-table-site a:hover { text-decoration: underline; }
         .pt-aas-hist-group-header { cursor: pointer; background: rgba(255,255,255,0.02); } .pt-aas-hist-group-header:hover { background: rgba(255,255,255,0.05); }
         .pt-aas-hist-badge { background: var(--pt-aas-accent); padding: 1px 5px; border-radius: 10px; font-size: 9px; display: inline-block; vertical-align: middle; }
         .pt-aas-hist-expander { display: inline-block; width: 12px; text-align: center; margin-right: 4px; color: var(--pt-aas-text-sub); }
-        .pt-aas-config-list-item { display: flex; justify-content: space-between; align-items: center; padding: 6px; background: rgba(0,0,0,0.1); margin-bottom: 4px; border-radius: 4px; }
+        .pt-aas-config-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 6px; background: rgba(0,0,0,0.1); margin-bottom: 4px; border-radius: 4px; }
         .pt-aas-mt-10 { margin-top: 10px; }
+        .pt-aas-slider-container { display:flex; align-items:center; gap:10px; }
+        .pt-aas-slider-container input { flex-grow:1; }
     `;
 
     // ===========================
@@ -219,20 +257,25 @@
 
         init: () => {
             GM_addStyle(Styles);
-            UI.createStatusBar(); UI.createToggleIcon(); UI.createSidebar();
-            UI.bindDrag(); UI.renderAll(); UI.renderDefaultStatus();
-            if (Data.isUIOpen()) document.getElementById(UI_ID).classList.remove('hidden');
+            UI.createStatusBar(); UI.createActionIcons(); UI.createSettingsSidebar(); UI.createHistoryPanel();
+            UI.bindDraggable('#'+ICON_CONTAINER_ID, Data.getIconPos, Data.setIconPos);
+            UI.bindDraggable(`#${SETTINGS_UI_ID} .pt-aas-header`, Data.getSettingsUIPos, Data.setSettingsUIPos);
+            UI.bindDraggable(`#${HISTORY_UI_ID} .pt-aas-header`, Data.getHistoryUIPos, Data.setHistoryUIPos);
+            UI.renderAll();
+            UI.updateIconScale(Data.getIconScale());
+
+            if (Data.isSettingsUIOpen()) document.getElementById(SETTINGS_UI_ID).classList.remove('hidden');
+            if (Data.isHistoryUIOpen()) document.getElementById(HISTORY_UI_ID).classList.remove('hidden');
         },
 
         createStatusBar: () => { const div = document.createElement('div'); div.id = STATUS_BAR_ID; document.body.appendChild(div); },
-        // [MODIFIED] Logic for showing and hiding the status bar
-        updateStatusBar: (status, message) => {
+        updateStatusBar: (status, message, isSticky = false) => {
             clearTimeout(UI.statusTimeout);
             const el = document.getElementById(STATUS_BAR_ID);
             el.className = status;
             el.textContent = message;
 
-            if (status === 'info') {
+            if (status === 'info' || !message) {
                 el.style.display = 'none';
                 document.body.style.marginTop = '0';
             } else {
@@ -240,28 +283,46 @@
                 document.body.style.marginTop = '28px';
             }
 
-            if (status === 'success' || status === 'error' || status === 'warning') {
-                UI.statusTimeout = setTimeout(() => {
-                    UI.renderDefaultStatus(); // This will revert to 'info' state, hiding the bar
-                }, 8000); // Hide after 8 seconds
+            if (!isSticky && (status === 'success' || status === 'error' || status === 'warning')) {
+                 // No auto-hide as per requirement
             }
         },
-        // [MODIFIED] Now this function's main purpose is to set the hidden 'info' state.
-        renderDefaultStatus: () => {
-            UI.updateStatusBar('info', '');
+
+        createActionIcons: () => {
+            const container = document.createElement('div');
+            container.id = ICON_CONTAINER_ID;
+            const pos = Data.getIconPos();
+            container.style.top = pos.top; container.style.left = pos.left;
+            container.innerHTML = `
+                <div class="pt-aas-action-icon" id="pt-aas-push-icon" title="强制推送当前种子">🚀</div>
+                <div class="pt-aas-action-icon" id="pt-aas-quick-action-icon" title="快速发布/编辑">⚡️</div>
+                <div class="pt-aas-action-icon" id="pt-aas-history-icon" title="显示推送记录">📜</div>
+                <div class="pt-aas-action-icon" id="pt-aas-toggle-icon" title="打开设置">⚙️</div>
+            `;
+            document.body.appendChild(container);
+
+            document.getElementById('pt-aas-toggle-icon').onclick = UI.toggleSettingsSidebar;
+            document.getElementById('pt-aas-history-icon').onclick = UI.toggleHistoryPanel;
+            document.getElementById('pt-aas-push-icon').onclick = () => Automation.pushTorrent(true);
+            document.getElementById('pt-aas-quick-action-icon').onclick = Automation.quickAction;
+        },
+        toggleSettingsSidebar: () => { const sidebar = document.getElementById(SETTINGS_UI_ID); sidebar.classList.toggle('hidden'); Data.setSettingsUIOpen(!sidebar.classList.contains('hidden')); },
+        toggleHistoryPanel: () => { const panel = document.getElementById(HISTORY_UI_ID); panel.classList.toggle('hidden'); Data.setHistoryUIOpen(!panel.classList.contains('hidden')); },
+        updateIconScale: (value) => {
+            const container = document.getElementById(ICON_CONTAINER_ID);
+            if(container) container.style.transform = `scale(${value / 100})`;
+            const label = document.getElementById('icon-scale-label');
+            if(label) label.textContent = `${value}%`;
         },
 
-        createToggleIcon: () => { const icon = document.createElement('div'); icon.id = TOGGLE_ICON_ID; icon.innerHTML = '⚙️'; const pos = Data.getUIPos(); icon.style.top = pos.top; icon.style.left = pos.left; document.body.appendChild(icon); },
-        toggleSidebar: () => { const sidebar = document.getElementById(UI_ID); sidebar.classList.toggle('hidden'); Data.setUIOpen(!sidebar.classList.contains('hidden')); },
-
-        createSidebar: () => {
-            const container = document.createElement('div'); container.id = UI_ID; container.className = 'hidden';
-            const pos = Data.getUIPos(); container.style.top = pos.top; container.style.left = `${parseInt(pos.left) + 50}px`;
+        createSettingsSidebar: () => {
+            const container = document.createElement('div'); container.id = SETTINGS_UI_ID; container.className = 'pt-aas-panel hidden';
+            const pos = Data.getSettingsUIPos(); container.style.top = pos.top; container.style.left = pos.left;
             container.innerHTML = `
-                <div class="pt-aas-header" id="pt-aas-drag-handle"><span>PT Auto Seeder</span><span class="pt-aas-close-btn" id="pt-aas-close-btn-x">✕</span></div>
+                <div class="pt-aas-header"><span>PT Auto Seeder 设置</span><span class="pt-aas-close-btn" id="pt-aas-close-btn-settings">✕</span></div>
                 <div class="pt-aas-content">
                     <div class="pt-aas-section"><div class="pt-aas-sec-title">选择活动的 qB</div><div class="pt-aas-sec-body"><div class="pt-aas-btn-group" id="pt-aas-active-qb-list"></div></div></div>
-                    <div class="pt-aas-section collapsed"><div class="pt-aas-sec-title">qBittorrent 设置</div><div class="pt-aas-sec-body"><div id="pt-aas-qb-form"><input type="hidden" id="qb-id"><div class="pt-aas-form-group"><label>别名</label><input class="pt-aas-input" id="qb-name" placeholder="例如: Home NAS"></div><div class="pt-aas-form-group"><label>URL (http://ip:port)</label><input class="pt-aas-input" id="qb-url" placeholder="http://192.168.1.1:8080"></div><div class="pt-aas-form-group"><label>用户名</label><input class="pt-aas-input" id="qb-user"></div><div class="pt-aas-form-group"><label>密码</label><input class="pt-aas-input" type="password" id="qb-pass"></div><div class="pt-aas-form-group"><label>分类 (可选)</label><input class="pt-aas-input" id="qb-cat"></div><div class="pt-aas-form-group"><label>保存路径 (可选)</label><input class="pt-aas-input" id="qb-path"></div><div class="pt-aas-btn-group"><button class="pt-aas-btn primary" id="pt-aas-save-qb-btn">保存 qB</button><button class="pt-aas-btn" id="pt-aas-clear-qb-btn">清空表单</button></div></div><div class="pt-aas-mt-10"><strong>已保存的 qB:</strong></div><div id="pt-aas-saved-qb-list" class="pt-aas-mt-10"></div></div></div>
+                    <div class="pt-aas-section collapsed"><div class="pt-aas-sec-title">qBittorrent 设置</div><div class="pt-aas-sec-body"><div id="pt-aas-qb-form"><input type="hidden" id="qb-id"><div class="pt-aas-form-group"><label>别名</label><input class="pt-aas-input" id="qb-name" placeholder="例如: Home NAS"></div><div class="pt-aas-form-group"><label>URL (http://ip:port)</label><input class="pt-aas-input" id="qb-url" placeholder="http://192.168.1.1:8080"></div><div class="pt-aas-form-group"><label>用户名</label><input class="pt-aas-input" id="qb-user"></div><div class="pt-aas-form-group"><label>密码</label><input class="pt-aas-input" type="text" id="qb-pass"></div><div class="pt-aas-form-group"><label>分类 (可选)</label><input class="pt-aas-input" id="qb-cat"></div><div class="pt-aas-form-group"><label>保存路径 (可选)</label><input class="pt-aas-input" id="qb-path"></div><div class="pt-aas-btn-group"><button class="pt-aas-btn primary" id="pt-aas-save-qb-btn">保存 qB</button><button class="pt-aas-btn" id="pt-aas-clear-qb-btn">清空表单</button></div></div><div class="pt-aas-mt-10"><strong>已保存的 qB:</strong></div><div id="pt-aas-saved-qb-list" class="pt-aas-mt-10"></div></div></div>
                     <div class="pt-aas-section collapsed"><div class="pt-aas-sec-title">站点特定设置</div><div class="pt-aas-sec-body">
                         <div class="pt-aas-form-group"><label>站点别名 (可选)</label><input class="pt-aas-input" id="site-alias" placeholder="例如: 柠檬HD"></div>
                         <div class="pt-aas-form-group"><label>站点域名 (Host)</label><div style="display:flex; gap:5px;"><input class="pt-aas-input" id="site-host" placeholder="xxx.com"><button class="pt-aas-btn small" id="pt-aas-get-host-btn">获取当前</button></div></div>
@@ -270,7 +331,31 @@
                         <div class="pt-aas-btn-group"><button class="pt-aas-btn primary" id="pt-aas-save-site-btn">保存站点配置</button></div>
                         <div class="pt-aas-mt-10"><strong>已配置站点:</strong></div><div id="pt-aas-saved-site-list" class="pt-aas-mt-10"></div>
                     </div></div>
-                    <div class="pt-aas-section"><div class="pt-aas-sec-title">推送记录</div><div class="pt-aas-sec-body">
+                    <div class="pt-aas-section collapsed"><div class="pt-aas-sec-title">高级设置</div><div class="pt-aas-sec-body">
+                         <div class="pt-aas-form-group">
+                            <label>推送排除列表 (每行一个域名)</label>
+                            <textarea class="pt-aas-textarea" id="excluded-urls-textarea" placeholder="e.g.\nexample.com\nanother.site.net"></textarea>
+                            <button class="pt-aas-btn primary pt-aas-mt-10" id="save-excluded-urls-btn">保存排除列表</button>
+                         </div>
+                         <div class="pt-aas-form-group">
+                            <label>悬浮图标大小</label>
+                            <div class="pt-aas-slider-container">
+                                <input type="range" id="icon-scale-slider" min="50" max="300" step="10">
+                                <span id="icon-scale-label">100%</span>
+                            </div>
+                         </div>
+                    </div></div>
+                </div>`;
+            document.body.appendChild(container);
+            UI.bindSettingsEvents();
+        },
+        createHistoryPanel: () => {
+             const container = document.createElement('div'); container.id = HISTORY_UI_ID; container.className = 'pt-aas-panel hidden';
+             const pos = Data.getHistoryUIPos(); container.style.top = pos.top; container.style.left = pos.left;
+             container.innerHTML = `
+                <div class="pt-aas-header"><span>推送记录</span><span class="pt-aas-close-btn" id="pt-aas-close-btn-history">✕</span></div>
+                <div class="pt-aas-content">
+                    <div class="pt-aas-section"><div class="pt-aas-sec-body">
                         <div style="display: flex; gap: 5px; align-items: center; margin-bottom: 10px;">
                             <select id="pt-aas-history-qb-select" class="pt-aas-input" style="flex-grow: 1;"></select>
                             <button class="pt-aas-btn danger small" id="pt-aas-clear-history-btn" title="清空当前选中qB的所有记录">清空</button>
@@ -280,17 +365,61 @@
                             <tbody id="pt-aas-history-body"></tbody>
                         </table>
                     </div></div>
-                </div>`;
-            document.body.appendChild(container); UI.bindEvents();
+                </div>
+             `;
+             document.body.appendChild(container);
+             UI.bindHistoryEvents();
         },
-        bindDrag: () => { const handle=document.getElementById("pt-aas-drag-handle"),container=document.getElementById(UI_ID),icon=document.getElementById(TOGGLE_ICON_ID);let isDraggingPanel=!1,startX,startY,initialTop,initialLeft,iconIsBeingDragged=!1;handle.addEventListener("mousedown",e=>{if(e.target.classList.contains("pt-aas-close-btn"))return;isDraggingPanel=!0,startX=e.clientX,startY=e.clientY,initialTop=container.offsetTop,initialLeft=container.offsetLeft,handle.style.cursor="grabbing",e.preventDefault()}),icon.addEventListener("click",e=>{iconIsBeingDragged||UI.toggleSidebar()}),icon.addEventListener("mousedown",e=>{let t=!1;startX=e.clientX,startY=e.clientY,initialTop=icon.offsetTop,initialLeft=icon.offsetLeft,e.preventDefault();const n=o=>{t||(Math.abs(o.clientX-startX)>5||Math.abs(o.clientY-startY)>5)&&(t=!0,iconIsBeingDragged=!0,icon.style.cursor="grabbing"),t&&(icon.style.top=initialTop+o.clientY-startY+"px",icon.style.left=initialLeft+o.clientX-startX+"px")},s=()=>{document.removeEventListener("mousemove",n),document.removeEventListener("mouseup",s),icon.style.cursor="pointer",t&&(Data.setUIPos({top:icon.style.top,left:icon.style.left}),container.style.top=icon.style.top,container.style.left=parseInt(icon.style.left)+50+"px"),setTimeout(()=>{iconIsBeingDragged=!1},0)};document.addEventListener("mousemove",n),document.addEventListener("mouseup",s)}),document.addEventListener("mousemove",e=>{if(!isDraggingPanel)return;const t=e.clientY-startY,n=e.clientX-startX;container.style.top=initialTop+t+"px",container.style.left=initialLeft+n+"px"}),document.addEventListener("mouseup",()=>{isDraggingPanel&&(isDraggingPanel=!1,handle.style.cursor="move")}); },
-        bindEvents: () => {
-            document.querySelectorAll('.pt-aas-sec-title').forEach(el => el.onclick = () => el.parentElement.classList.toggle('collapsed'));
-            document.getElementById('pt-aas-close-btn-x').onclick = UI.toggleSidebar;
+        bindDraggable: (selector, getter, setter) => {
+            const handle = document.querySelector(selector);
+            const target = handle.closest('.pt-aas-panel') || handle;
+            let isDragging = false, startX, startY, initialTop, initialLeft;
+
+            handle.addEventListener("mousedown", e => {
+                if (e.target.closest('button, a, input, .pt-aas-close-btn')) return;
+                isDragging = true;
+                startX = e.clientX; startY = e.clientY;
+                const pos = getter();
+                initialTop = parseInt(pos.top, 10); initialLeft = parseInt(pos.left, 10);
+                handle.style.cursor = "grabbing"; e.preventDefault();
+            });
+
+            document.addEventListener("mousemove", e => {
+                if (!isDragging) return;
+                target.style.top = initialTop + e.clientY - startY + "px";
+                target.style.left = initialLeft + e.clientX - startX + "px";
+            });
+
+            document.addEventListener("mouseup", () => {
+                if(isDragging) {
+                    isDragging = false;
+                    handle.style.cursor = "move";
+                    if(handle !== target) handle.style.cursor = '';
+                    setter({ top: target.style.top, left: target.style.left });
+                }
+            });
+        },
+
+        bindSettingsEvents: () => {
+            document.querySelectorAll(`#${SETTINGS_UI_ID} .pt-aas-sec-title`).forEach(el => el.onclick = () => el.parentElement.classList.toggle('collapsed'));
+            document.getElementById('pt-aas-close-btn-settings').onclick = UI.toggleSettingsSidebar;
             document.getElementById('pt-aas-clear-qb-btn').onclick = UI.clearQbForm; document.getElementById('pt-aas-save-qb-btn').onclick = UI.saveQb;
             document.getElementById('pt-aas-get-host-btn').onclick = () => { document.getElementById('site-host').value = Utils.getCurrentHost(); };
             document.getElementById('site-superseed-btn').onclick = (e) => { const isOn = !e.target.classList.contains('on'); e.target.dataset.val = isOn; e.target.classList.toggle('on', isOn); };
             document.getElementById('pt-aas-save-site-btn').onclick = UI.saveSite;
+
+            const scaleSlider = document.getElementById('icon-scale-slider');
+            scaleSlider.oninput = (e) => UI.updateIconScale(e.target.value);
+            scaleSlider.onchange = (e) => { Data.setIconScale(e.target.value); };
+
+            document.getElementById('save-excluded-urls-btn').onclick = () => {
+                const urls = document.getElementById('excluded-urls-textarea').value;
+                Data.setExcludedUrls(urls);
+                alert('排除列表已保存。');
+            };
+        },
+        bindHistoryEvents: () => {
+            document.getElementById('pt-aas-close-btn-history').onclick = UI.toggleHistoryPanel;
             document.getElementById('pt-aas-history-qb-select').onchange = (e) => UI.renderHistory(e.target.value);
             document.getElementById('pt-aas-clear-history-btn').onclick = () => {
                 const qbId = document.getElementById('pt-aas-history-qb-select').value;
@@ -299,10 +428,13 @@
             document.getElementById('pt-aas-history-body').onclick = (e) => {
                 const deleteBtn = e.target.closest('.pt-aas-delete-hist-btn');
                 if (deleteBtn) {
-                    const qbId = deleteBtn.dataset.qbid;
-                    const time = parseInt(deleteBtn.dataset.time, 10);
-                    Data.deleteHistoryEntry(qbId, time);
-                    UI.renderHistory(qbId);
+                    const { qbid, time, groupName } = deleteBtn.dataset;
+                    if (groupName) { // Delete entire group
+                        if (Data.deleteHistoryGroup(qbid, groupName)) { UI.renderHistory(qbid); }
+                    } else { // Delete single entry
+                        Data.deleteHistoryEntry(qbid, time);
+                        UI.renderHistory(qbid);
+                    }
                     return;
                 }
                 const header = e.target.closest('.pt-aas-hist-group-header');
@@ -314,14 +446,23 @@
             };
         },
 
-        renderAll: () => { UI.renderActiveQbSelector(); UI.renderQbList(); UI.renderSiteList(); UI.renderHistorySelectors(); },
+        renderAll: () => {
+            UI.renderActiveQbSelector(); UI.renderQbList(); UI.renderSiteList();
+            UI.renderHistorySelectors(); UI.renderAdvancedSettings();
+        },
+        renderAdvancedSettings: () => {
+            document.getElementById('excluded-urls-textarea').value = Data.getExcludedUrls();
+            const scale = Data.getIconScale();
+            document.getElementById('icon-scale-slider').value = scale;
+            document.getElementById('icon-scale-label').textContent = `${scale}%`;
+        },
         clearQbForm: () => ['qb-id','qb-name','qb-url','qb-user','qb-pass','qb-cat','qb-path'].forEach(id => document.getElementById(id).value = ''),
         fillQbForm: (qb) => { document.getElementById('qb-id').value = qb.id; document.getElementById('qb-name').value = qb.name; document.getElementById('qb-url').value = qb.url; document.getElementById('qb-user').value = qb.user; document.getElementById('qb-pass').value = qb.pass; document.getElementById('qb-cat').value = qb.cat || ''; document.getElementById('qb-path').value = qb.path || ''; },
         saveQb: () => {
             const id = document.getElementById('qb-id').value || Utils.generateId(), newQb = { id, name: document.getElementById('qb-name').value.trim() || 'Unnamed', url: document.getElementById('qb-url').value.trim(), user: document.getElementById('qb-user').value.trim(), pass: document.getElementById('qb-pass').value.trim(), cat: document.getElementById('qb-cat').value.trim(), path: document.getElementById('qb-path').value.trim() };
             if (!newQb.url) return alert('URL is required');
             let qbs = Data.getQBs(), idx = qbs.findIndex(q => q.id === id); (idx > -1) ? qbs[idx] = newQb : qbs.push(newQb);
-            Data.setQBs(qbs); UI.clearQbForm(); UI.renderAll(); if (!Data.getActiveQbId()) Data.setActiveQbId(id);
+            Data.setQBs(qbs); UI.clearQbForm(); UI.renderAll(); if (!Data.getActiveQbId()) { Data.setActiveQbId(id); UI.renderActiveQbSelector(); UI.renderHistorySelectors(); }
         },
         deleteQb: (id) => { if (!confirm('确定要删除此qB配置吗？')) return; let qbs = Data.getQBs().filter(q => q.id !== id); Data.setQBs(qbs); if (Data.getActiveQbId() === id) Data.setActiveQbId(qbs.length > 0 ? qbs[0].id : null); UI.renderAll(); },
         renderActiveQbSelector: () => {
@@ -332,7 +473,7 @@
         renderQbList: () => {
             const container = document.getElementById('pt-aas-saved-qb-list'); container.innerHTML = '';
             Data.getQBs().forEach(qb => { const div = document.createElement('div'); div.className = 'pt-aas-config-list-item'; div.innerHTML = `<span><strong>${qb.name}</strong> <small>(${qb.url})</small></span><div><button class="pt-aas-btn small" data-id="${qb.id}" data-action="edit">编辑</button><button class="pt-aas-btn small danger" data-id="${qb.id}" data-action="delete">X</button></div>`; container.appendChild(div); });
-            container.onclick = (e) => { const t = e.target; if (t.tagName !== 'BUTTON') return; const id = t.dataset.id, action = t.dataset.action; if (action === 'edit') UI.fillQbForm(Data.getQBs().find(q=>q.id===id)); else if (action === 'delete') UI.deleteQb(id); };
+            container.onclick = (e) => { const t = e.target; if (t.tagName !== 'BUTTON') return; const id = t.dataset.id, action = t.dataset.action; if (action === 'edit') { UI.toggleSettingsSidebar(); document.querySelector(`#${SETTINGS_UI_ID} .pt-aas-section.collapsed`)?.classList.remove('collapsed'); UI.fillQbForm(Data.getQBs().find(q=>q.id===id)); } else if (action === 'delete') UI.deleteQb(id); };
         },
         saveSite: () => {
             const host = document.getElementById('site-host').value.trim(); if (!host) return alert('Host required');
@@ -344,11 +485,45 @@
         },
         fillSiteForm: (host, config) => { document.getElementById('site-host').value = host; document.getElementById('site-alias').value = config.alias || ''; document.getElementById('site-uplimit').value = config.upLimit || ''; const ssBtn = document.getElementById('site-superseed-btn'); ssBtn.dataset.val = config.superSeed ? 'true' : 'false'; ssBtn.classList.toggle('on', !!config.superSeed); },
         renderSiteList: () => {
-            const container = document.getElementById('pt-aas-saved-site-list'); container.innerHTML = '';
+            const container = document.getElementById('pt-aas-saved-site-list');
+            container.innerHTML = '';
             Object.entries(Data.getSites()).forEach(([host, conf]) => {
-                const div = document.createElement('div'); div.className = 'pt-aas-config-list-item';
-                div.innerHTML = `<span style="font-size:11px;"><strong>${conf.alias||host}</strong> <small>(${host})</small></span><div><button class="pt-aas-btn small" data-host="${host}">编辑</button></div>`; container.appendChild(div);
-                div.querySelector('button').onclick = () => UI.fillSiteForm(host, conf);
+                const div = document.createElement('div');
+                div.className = 'pt-aas-config-list-item';
+
+                // Build the details string (speed limit, super seeding)
+                let details = [];
+                if (conf.upLimit && parseFloat(conf.upLimit) > 0) {
+                    details.push(`限速: ${conf.upLimit}MiB/s`);
+                } else {
+                    details.push('不限速');
+                }
+                if (conf.superSeed) {
+                    details.push('超级做种');
+                }
+                const detailsText = details.join(' | ');
+
+                // Build the main display name string (alias + host)
+                const siteDisplayName = conf.alias
+                    ? `<strong>${conf.alias}</strong> <small style="color: var(--pt-aas-text-sub);">(${host})</small>`
+                    : `<strong>${host}</strong>`;
+
+                div.innerHTML = `
+                    <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: center;">
+                        <div style="font-size:12px; line-height: 1.3;">${siteDisplayName}</div>
+                        <small style="display: block; color: var(--pt-aas-text-sub); font-size: 10px; margin-top: 3px;">${detailsText}</small>
+                    </div>
+                    <div><button class="pt-aas-btn small" data-host="${host}">编辑</button></div>
+                `;
+                container.appendChild(div);
+
+                div.querySelector('button').onclick = () => {
+                    const siteSection = document.getElementById('pt-aas-saved-site-list').closest('.pt-aas-section');
+                    if (siteSection.classList.contains('collapsed')) {
+                        siteSection.classList.remove('collapsed');
+                    }
+                    UI.fillSiteForm(host, conf);
+                };
             });
         },
         renderHistorySelectors: () => {
@@ -371,46 +546,41 @@
                 const isCollapsed = isMulti && (UI.collapsedHistoryGroups[name] !== false);
 
                 const tr = document.createElement('tr');
-                tr.dataset.qbid = qbId;
-                tr.dataset.groupName = name;
+                tr.dataset.qbid = qbId; tr.dataset.groupName = name;
                 if (isMulti) { tr.className = 'pt-aas-hist-group-header'; }
 
                 const countBadge = `<span class="pt-aas-hist-badge">${groupItems.length}</span>`;
                 let nameCellHtml = name;
-                if (isMulti) {
-                    nameCellHtml = `<span class="pt-aas-hist-expander">${isCollapsed ? '▶' : '▼'}</span>${name}`;
-                }
+                if (isMulti) nameCellHtml = `<span class="pt-aas-hist-expander">${isCollapsed ? '▶' : '▼'}</span>${name}`;
 
                 const siteCellHtml = (() => {
                     if (isMulti && isCollapsed) return countBadge;
-                    let host; try { host = newest.host || new URL(newest.url).hostname; } catch { host = "未知站点"; }
+                    const host = newest.host || new URL(newest.url).hostname;
                     const siteConf = Data.getSiteConfig(host);
-                    const siteDisplay = siteConf?.alias || host;
-                    return `<a href="${newest.url}" target="_blank" title="${newest.url}">${siteDisplay}</a>`;
+                    return `<a href="${newest.url}" target="_blank" title="${newest.url}">${siteConf?.alias || host}</a>`;
                 })();
 
+                const deleteButtonHtml = isCollapsed
+                    ? `<button class="pt-aas-btn danger small pt-aas-delete-hist-btn" data-qbid="${qbId}" data-group-name="${name}" title="删除组内所有记录">删组</button>`
+                    : `<button class="pt-aas-btn danger small pt-aas-delete-hist-btn" data-qbid="${qbId}" data-time="${newest.time}" title="删除此条记录">删</button>`;
+
                 tr.innerHTML = `
-                    <td>${nameCellHtml}</td>
-                    <td class="pt-aas-table-site">${siteCellHtml}</td>
-                    <td>${Utils.formatTime(newest.time)}</td>
-                    <td><button class="pt-aas-btn danger small pt-aas-delete-hist-btn" data-qbid="${qbId}" data-time="${newest.time}" title="删除此条记录">删</button></td>
-                `;
+                    <td>${nameCellHtml}</td> <td class="pt-aas-table-site">${siteCellHtml}</td>
+                    <td>${Utils.formatTime(newest.time)}</td> <td>${deleteButtonHtml}</td>`;
                 tbody.appendChild(tr);
 
                 if (isMulti && !isCollapsed) {
                     groupItems.slice(1).forEach(item => {
                         const detailTr = document.createElement('tr');
                         detailTr.style.background = 'rgba(0,0,0,0.15)';
-                        let detailHost; try { detailHost = item.host || new URL(item.url).hostname; } catch { detailHost = "未知站点"; }
+                        const detailHost = item.host || new URL(item.url).hostname;
                         const detailSiteConf = Data.getSiteConfig(detailHost);
-                        const detailSiteDisplay = detailSiteConf?.alias || detailHost;
-                        const detailSiteLink = `<a href="${item.url}" target="_blank" title="${item.url}">${detailSiteDisplay}</a>`;
+                        const detailSiteLink = `<a href="${item.url}" target="_blank" title="${item.url}">${detailSiteConf?.alias || detailHost}</a>`;
                         detailTr.innerHTML = `
                             <td style="padding-left:25px;opacity:0.7;">↳ ${item.name}</td>
                             <td class="pt-aas-table-site" style="opacity:0.7;">${detailSiteLink}</td>
                             <td style="opacity:0.7;">${Utils.formatTime(item.time)}</td>
-                            <td><button class="pt-aas-btn danger small pt-aas-delete-hist-btn" data-qbid="${qbId}" data-time="${item.time}" title="删除此条记录">删</button></td>
-                        `;
+                            <td><button class="pt-aas-btn danger small pt-aas-delete-hist-btn" data-qbid="${qbId}" data-time="${item.time}" title="删除此条记录">删</button></td>`;
                         tbody.appendChild(detailTr);
                     });
                 }
@@ -422,38 +592,116 @@
     // Main Automation Logic
     // ===========================
     const Automation = {
-        checkAndRun: async () => {
-            if (!/details\.php.+uploaded=1/.test(window.location.href)) return;
-            console.log("PT AAS: Upload success page detected.");
+        parsePageForTorrent: () => {
+            const url = window.location.href;
+            const doc = document;
+            let torrentLink, torrentName;
 
-            const link = Array.from(document.querySelectorAll('a[href*="download.php"]')).find(a => a.href.includes('id='));
-            if (!link) { UI.updateStatusBar('error', '推送失败: 找不到下载链接'); return; }
+            // Site Type 1 (TTG-like, e.g., /dl/...)
+            const ttgLink = Array.from(doc.querySelectorAll('a.index[href*="/dl/"], a[href*=".torrent"]')).find(a => a.href.includes('/dl/') && (a.href.includes('.torrent') || a.textContent.includes('.torrent')));
+            if (ttgLink) {
+                torrentLink = ttgLink.href;
+                torrentName = ttgLink.textContent.trim();
+                return { link: new URL(torrentLink, url).href, name: torrentName };
+            }
+
+            // Site Type 2A (download_check URL)
+            if (url.includes('download_check')) {
+                const nameElement = Array.from(doc.querySelectorAll('dt')).find(dt => dt.textContent.trim().toLowerCase() === 'name')?.nextElementSibling;
+                const linkElement = doc.querySelector('a.form__button[href*="/torrents/download/"]');
+                if (nameElement && linkElement) {
+                    torrentLink = linkElement.href;
+                    torrentName = nameElement.textContent.trim();
+                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                }
+            }
+
+            // Site Type 2B (details page, e.g., /torrents/xxxxx)
+            const torrentNameH1 = doc.querySelector('h1.torrent__name');
+            if (torrentNameH1) {
+                const linkElement = doc.querySelector('a.form__button[href*="/torrents/download/"]');
+                if (linkElement) {
+                    torrentLink = linkElement.href;
+                    torrentName = torrentNameH1.textContent.trim();
+                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                }
+            }
+
+            // Original Logic (e.g., details.php?id=...&uploaded=1)
+            if (url.includes('details.php')) {
+                 const link = Array.from(doc.querySelectorAll('a[href*="download.php"]')).find(a => a.href.includes('id='));
+                 if (link) {
+                    torrentLink = link.href;
+                    torrentName = link.textContent.trim() || doc.title;
+                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                 }
+            }
+            return null;
+        },
+
+        pushTorrent: async (isForced = false) => {
+            const torrentInfo = Automation.parsePageForTorrent();
+            if (!torrentInfo) {
+                if (isForced) UI.updateStatusBar('error', '推送失败: 在当前页面找不到有效的种子链接', true);
+                return;
+            }
 
             const activeQb = Data.getActiveQb();
-            if (!activeQb) { UI.updateStatusBar('warning', '推送跳过: 未选择qB客户端'); return; }
+            if (!activeQb) { UI.updateStatusBar('warning', '推送跳过: 未选择活动的qB客户端', true); return; }
 
-            const cleanName = Utils.cleanTorrentName(link.textContent.trim() || document.title);
-            UI.updateStatusBar('loading', `正在推送: ${cleanName}`);
+            const cleanName = Utils.cleanTorrentName(torrentInfo.name);
+            UI.updateStatusBar('loading', `正在推送: ${cleanName}`, true);
 
             try {
-                const blob = await new Promise((resolve, reject) => GM_xmlhttpRequest({ method:"GET", url:link.href, responseType:"blob", onload:r=>r.status===200?resolve(r.response):reject(r.status), onerror:reject }));
+                const blob = await new Promise((resolve, reject) => GM_xmlhttpRequest({ method:"GET", url:torrentInfo.link, responseType:"blob", onload:r=>r.status===200?resolve(r.response):reject(r.status), onerror:reject }));
                 const result = await new QBClient(activeQb).addTorrent(blob, Data.getSiteConfig(Utils.getCurrentHost()));
 
                 if (result.success) {
                     Data.addHistory(activeQb.id, { name: cleanName, url: Utils.cleanUrl(window.location.href), host: Utils.getCurrentHost(), time: Date.now() });
-                    if (Data.isUIOpen() && Data.getActiveQbId() === activeQb.id) UI.renderHistory(activeQb.id);
+                    UI.renderHistory(activeQb.id);
                     const messageParts = ['推送成功'];
                     messageParts.push(`qB: ${activeQb.name}`);
                     if (activeQb.cat) messageParts.push(`分类: ${activeQb.cat}`);
-                    if (activeQb.path) messageParts.push(`路径: ${activeQb.path}`);
-                    UI.updateStatusBar('success', messageParts.join(' | '));
+                    UI.updateStatusBar('success', messageParts.join(' | '), true);
                 } else {
                      throw new Error(result.message);
                 }
             } catch (error) {
-                const messageParts = [`推送失败: ${error.message || '网络错误'}`];
-                if (activeQb) { messageParts.push(`qB: ${activeQb.name}`); }
-                UI.updateStatusBar('error', messageParts.join(' | '));
+                UI.updateStatusBar('error', `推送失败: ${error.message || '网络错误'} | qB: ${activeQb.name}`, true);
+            }
+        },
+
+        checkAndRun: async () => {
+            const url = window.location.href;
+            const excluded = Data.getExcludedUrls().split('\n').filter(Boolean).map(u => u.trim());
+            if(excluded.some(ex => url.includes(ex))) {
+                console.log("PT AAS: URL on exclusion list, skipping automatic push.");
+                return;
+            }
+
+            if (url.includes('uploaded=1') || url.includes('download_check')) {
+                console.log("PT AAS: Upload success page detected, attempting to push.");
+                Automation.pushTorrent(false);
+            }
+        },
+
+        quickAction: () => {
+            const path = window.location.pathname;
+            const href = window.location.href;
+            let target;
+
+            if (path.includes('/upload.php')) {
+                target = document.querySelector('input#qr[type="submit"].btn, input[type="submit"][value="发布"]');
+            } else if (path.includes('/details.php')) {
+                target = document.querySelector('a[href*="edit.php?id="]');
+            } else if (path.includes('/edit.php')) {
+                target = document.querySelector('input#qr[type="submit"], input[type="submit"][value="保存"], input[type="submit"][value="编辑"]');
+            }
+
+            if (target) {
+                target.click();
+            } else {
+                alert('快速操作按钮在此页面无效。');
             }
         }
     };
@@ -461,6 +709,7 @@
     // Initialization
     UI.init();
     Automation.checkAndRun();
-    if (window.onurlchange === null) window.addEventListener('urlchange', Automation.checkAndRun);
-
+    if (window.onurlchange === null) {
+        window.addEventListener('urlchange', Automation.checkAndRun);
+    }
 })();
