@@ -1,0 +1,31 @@
+#!/bin/bash
+
+
+# 准备参数列表
+PARAMS=""
+
+
+# 如果有参数传入，则处理参数
+if [ $# -gt 0 ]; then
+    # 检查第一个参数是否是文件夹
+    if [ -d "$1" ]; then
+        # 获取第一个参数的完整绝对路径
+        FIRST_ARG=$(readlink -f "$1")
+        
+        # 重新构建参数列表，将完整路径作为第一个参数
+        PARAMS="$FIRST_ARG ${@:2}"
+    else
+        # 如果不是文件夹，直接使用原始参数
+        PARAMS="$*"
+    fi
+fi
+
+
+# 执行 Docker 命令
+docker run --rm -it --privileged --network=host \
+    -v /docker/ua/config.py:/UA/data/config.py \
+    -v /docker/ua/tmp:/UA/tmp \
+    -v /downloads:/downloads \
+    -v /BT_backup:/BT_backup \
+    $DOCKER_CMD_ARGS \
+    ghcr.io/audionut/upload-assistant:latest $PARAMS
