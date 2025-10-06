@@ -23,8 +23,8 @@ fi
 
 # 执行 Docker 命令
 docker run --rm -it --privileged --network=host \
-    -v /docker/ua/config.py:/UA/data/config.py \
-    -v /docker/ua/tmp:/UA/tmp \
+    -v /docker/ua/config.py:/Upload-Assistant/data/config.py \
+    -v /docker/ua/tmp:/Upload-Assistant/tmp \
     -v /downloads:/downloads \
     -v /BT_backup:/BT_backup \
     $DOCKER_CMD_ARGS \
