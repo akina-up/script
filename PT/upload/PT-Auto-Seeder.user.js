@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.1
+// @version      1.0.2
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
@@ -11,6 +11,7 @@
 // @match        https://kp.m-team.cc/*
 // @match        https://*/torrents*
 // @match        https://totheglory.im/t/*
+// @match        https://beyond-hd.me/*
 // @connect      *
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/upload/PT-Auto-Seeder.user.js
 // @updateURL    https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/upload/PT-Auto-Seeder.user.js
@@ -26,6 +27,10 @@
 
 /* 更新日志
  * v1.0.1
+ * - [新增] 支持BHD
+ * - [优化] hawke强推
+ * - [修复] 修复了在qB设置中点击“编辑”按钮。
+ * v1.0.1
  * - [新增] 支持U3D
  * - [新增] “强制推送”按钮，可手动触发推送
  * - [新增] “快速操作”按钮，用于快速发布/编辑/保存
@@ -38,7 +43,7 @@
  * v1.0.0
  * -试运行
  */
- 
+
 (function() {
     'use strict';
 
@@ -139,7 +144,7 @@
     };
 
     // ===========================
-    // qBittorrent API Client
+    // qBitorrent API Client
     // ===========================
     class QBClient {
         constructor(config) { this.config = config; this.baseUrl = config.url.replace(/\/+$/, ""); }
@@ -370,18 +375,23 @@
              document.body.appendChild(container);
              UI.bindHistoryEvents();
         },
+        // [MODIFIED] 修复了拖拽后鼠标指针样式不正确的问题
         bindDraggable: (selector, getter, setter) => {
             const handle = document.querySelector(selector);
+            if (!handle) return;
             const target = handle.closest('.pt-aas-panel') || handle;
             let isDragging = false, startX, startY, initialTop, initialLeft;
 
             handle.addEventListener("mousedown", e => {
-                if (e.target.closest('button, a, input, .pt-aas-close-btn')) return;
+                if (e.target.closest('button, a, input, select, textarea, .pt-aas-close-btn')) return;
                 isDragging = true;
                 startX = e.clientX; startY = e.clientY;
                 const pos = getter();
-                initialTop = parseInt(pos.top, 10); initialLeft = parseInt(pos.left, 10);
-                handle.style.cursor = "grabbing"; e.preventDefault();
+                initialTop = parseInt(pos.top, 10) || 0;
+                initialLeft = parseInt(pos.left, 10) || 0;
+                handle.style.cursor = "grabbing";
+                document.body.style.userSelect = 'none'; // 防止拖拽时选中文本
+                e.preventDefault();
             });
 
             document.addEventListener("mousemove", e => {
@@ -391,14 +401,15 @@
             });
 
             document.addEventListener("mouseup", () => {
-                if(isDragging) {
+                if (isDragging) {
                     isDragging = false;
-                    handle.style.cursor = "move";
-                    if(handle !== target) handle.style.cursor = '';
+                    handle.style.cursor = "move"; // 确保拖拽结束后指针恢复为移动手势
+                    document.body.style.userSelect = '';
                     setter({ top: target.style.top, left: target.style.left });
                 }
             });
         },
+
 
         bindSettingsEvents: () => {
             document.querySelectorAll(`#${SETTINGS_UI_ID} .pt-aas-sec-title`).forEach(el => el.onclick = () => el.parentElement.classList.toggle('collapsed'));
@@ -473,7 +484,29 @@
         renderQbList: () => {
             const container = document.getElementById('pt-aas-saved-qb-list'); container.innerHTML = '';
             Data.getQBs().forEach(qb => { const div = document.createElement('div'); div.className = 'pt-aas-config-list-item'; div.innerHTML = `<span><strong>${qb.name}</strong> <small>(${qb.url})</small></span><div><button class="pt-aas-btn small" data-id="${qb.id}" data-action="edit">编辑</button><button class="pt-aas-btn small danger" data-id="${qb.id}" data-action="delete">X</button></div>`; container.appendChild(div); });
-            container.onclick = (e) => { const t = e.target; if (t.tagName !== 'BUTTON') return; const id = t.dataset.id, action = t.dataset.action; if (action === 'edit') { UI.toggleSettingsSidebar(); document.querySelector(`#${SETTINGS_UI_ID} .pt-aas-section.collapsed`)?.classList.remove('collapsed'); UI.fillQbForm(Data.getQBs().find(q=>q.id===id)); } else if (action === 'delete') UI.deleteQb(id); };
+            // [MODIFIED] 修复编辑按钮点击后关闭面板的问题
+            container.onclick = (e) => {
+                const t = e.target;
+                if (t.tagName !== 'BUTTON') return;
+                const id = t.dataset.id;
+                const action = t.dataset.action;
+                if (action === 'edit') {
+                    // 填充表单
+                    const qbToEdit = Data.getQBs().find(q => q.id === id);
+                    if (qbToEdit) {
+                        UI.fillQbForm(qbToEdit);
+                    }
+                    // 确保qB设置部分是展开的
+                    const qbSection = document.getElementById('pt-aas-qb-form').closest('.pt-aas-section');
+                    if (qbSection && qbSection.classList.contains('collapsed')) {
+                        qbSection.classList.remove('collapsed');
+                    }
+                    // 滚动到表单位置
+                    document.getElementById('qb-name').focus();
+                } else if (action === 'delete') {
+                    UI.deleteQb(id);
+                }
+            };
         },
         saveSite: () => {
             const host = document.getElementById('site-host').value.trim(); if (!host) return alert('Host required');
@@ -592,10 +625,22 @@
     // Main Automation Logic
     // ===========================
     const Automation = {
+        // [MODIFIED] 增加了对 BHD 和 Hawke 等站点的支持
         parsePageForTorrent: () => {
             const url = window.location.href;
             const doc = document;
             let torrentLink, torrentName;
+
+            // [NEW] 专门为 BHD 的 download_check 页面定制
+            if (url.includes('beyond-hd.me/download_check/')) {
+                const nameElement = doc.querySelector('a.beta-link-blend[href*="/torrents/"]');
+                const linkElement = doc.querySelector('a.bhd-md-button[href*="/download/"]');
+                if (nameElement && linkElement) {
+                    torrentLink = linkElement.href;
+                    torrentName = nameElement.textContent.trim();
+                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                }
+            }
 
             // Site Type 1 (TTG-like, e.g., /dl/...)
             const ttgLink = Array.from(doc.querySelectorAll('a.index[href*="/dl/"], a[href*=".torrent"]')).find(a => a.href.includes('/dl/') && (a.href.includes('.torrent') || a.textContent.includes('.torrent')));
@@ -605,7 +650,7 @@
                 return { link: new URL(torrentLink, url).href, name: torrentName };
             }
 
-            // Site Type 2A (download_check URL)
+            // Site Type 2A (旧的 download_check URL)
             if (url.includes('download_check')) {
                 const nameElement = Array.from(doc.querySelectorAll('dt')).find(dt => dt.textContent.trim().toLowerCase() === 'name')?.nextElementSibling;
                 const linkElement = doc.querySelector('a.form__button[href*="/torrents/download/"]');
@@ -616,10 +661,13 @@
                 }
             }
 
-            // Site Type 2B (details page, e.g., /torrents/xxxxx)
-            const torrentNameH1 = doc.querySelector('h1.torrent__name');
+            // [MODIFIED] Site Type 2B (details page, e.g., /torrents/xxxxx)，增加了对 badge-extra 的支持
+            const torrentNameH1 = doc.querySelector('h1.torrent__name, h1');
             if (torrentNameH1) {
-                const linkElement = doc.querySelector('a.form__button[href*="/torrents/download/"]');
+                const linkElement = doc.querySelector(
+                    'a.form__button[href*="/torrents/download/"],' +
+                    'a[href*="/torrents/download/"][role="button"].badge-extra'
+                );
                 if (linkElement) {
                     torrentLink = linkElement.href;
                     torrentName = torrentNameH1.textContent.trim();
@@ -638,6 +686,7 @@
             }
             return null;
         },
+
 
         pushTorrent: async (isForced = false) => {
             const torrentInfo = Automation.parsePageForTorrent();
