@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.2
+// @version      1.0.3
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
@@ -26,7 +26,9 @@
 // ==/UserScript==
 
 /* 更新日志
- * v1.0.1
+ * v1.0.3
+ * - [修复] chrome下重复推送的问题
+ * v1.0.2
  * - [新增] 支持BHD
  * - [优化] hawke强推
  * - [修复] 修复了在qB设置中点击“编辑”按钮。
@@ -728,7 +730,7 @@
                 return;
             }
 
-            if (url.includes('uploaded=1') || url.includes('download_check')) {
+            if (url.endsWith('uploaded=1') || url.includes('download_check')) {
                 console.log("PT AAS: Upload success page detected, attempting to push.");
                 Automation.pushTorrent(false);
             }
