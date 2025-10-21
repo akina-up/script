@@ -1,31 +1,64 @@
 #!/bin/bash
 
+# 默认镜像
+IMAGE="ghcr.io/audionut/upload-assistant:latest"
 
-# 准备参数列表
-PARAMS=""
-
-
-# 如果有参数传入，则处理参数
-if [ $# -gt 0 ]; then
-    # 检查第一个参数是否是文件夹
-    if [ -d "$1" ]; then
-        # 获取第一个参数的完整绝对路径
-        FIRST_ARG=$(readlink -f "$1")
+# 检查第一个参数
+case "$1" in
+    # 处理 -up 参数，用于更新镜像
+    -up)
+        echo "正在拉取最新的镜像: ghcr.io/audionut/upload-assistant:latest..."
+        docker pull ghcr.io/audionut/upload-assistant:latest
         
-        # 重新构建参数列表，将完整路径作为第一个参数
-        PARAMS="$FIRST_ARG ${@:2}"
+        echo "正在删除旧的 upload-assistant 镜像..."
+        # 查找除了 'latest' 标签之外的所有 ghcr.io/audionut/upload-assistant 镜像ID
+        OLD_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep '^ghcr.io/audionut/upload-assistant:' | grep -v ':latest' | awk '{print $2}')
+        
+        if [ -n "$OLD_IMAGES" ]; then
+            docker rmi $OLD_IMAGES
+        else
+            echo "没有找到可删除的旧镜像。"
+        fi
+        # 完成后退出脚本
+        exit 0
+        ;;
+
+    # 处理 -v 参数，用于指定镜像版本
+    -v)
+        # 检查是否提供了版本号
+        if [ -z "$2" ]; then
+            echo "错误: 使用 -v 参数时必须提供版本号。"
+            echo "用法: $0 -v <版本号> [文件/目录]"
+            exit 1
+        fi
+        IMAGE="ghcr.io/audionut/upload-assistant:$2"
+        # 从参数列表中移除 -v 和版本号
+        shift 2
+        ;;
+esac
+
+# 准备要传递给 Docker 的参数列表
+PARAMS=()
+if [ $# -gt 0 ]; then
+    # 检查第一个参数是否是目录
+    if [ -d "$1" ]; then
+        # 获取绝对路径
+        FIRST_ARG=$(readlink -f "$1")
+        PARAMS+=("$FIRST_ARG")
+        shift
+        PARAMS+=("$@")
     else
-        # 如果不是文件夹，直接使用原始参数
-        PARAMS="$*"
+        PARAMS+=("$@")
     fi
 fi
 
-
-# 执行 Docker 命令
+# 执行 Docker
+# 使用 $IMAGE 变量来指定镜像
 docker run --rm -it --privileged --network=host \
     -v /docker/ua/config.py:/Upload-Assistant/data/config.py \
+    -v /docker/ua/cookie:/Upload-Assistant/data/cookies  \
     -v /docker/ua/tmp:/Upload-Assistant/tmp \
     -v /downloads:/downloads \
     -v /BT_backup:/BT_backup \
     $DOCKER_CMD_ARGS \
-    ghcr.io/audionut/upload-assistant:latest $PARAMS
+    "${IMAGE}" "${PARAMS[@]}"
