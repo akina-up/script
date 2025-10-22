@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         qBittorrent 复制跳转脚本
 // @namespace    https://github.com/akina-up/script
-// @version      3.0.4
+// @version      3.0.5
 // @description  (由 Gemini 2.5 Pro 助理重构)为qB右键菜单添加高度可定制的复制/跳转命令, 支持拖放排序、层级子菜单、可视化图标选择、路径映射和模板, 保存无需刷新。原脚本来源UA discord服务器的btTeddy，改写部分功能
 // @author       akina
 // @icon         https://www.qbittorrent.org/favicon.ico
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /* 更新日志
+ * v3.0.5
+ * - 1. 新增配置导入导出功能，方便分享。
+ * - 2. 新增占位符域名替换功能，例如 {comment_url|new.com} 将会把注释中的链接域名替换为 new.com 同时保留路径。支持 {comment} 和 {comment_url}。
+ * - 3. 设置界面中 "站点特定网址" 列表调整为可折叠样式，优化界面。
+ *
  * v3.0.4
  * - 1.为跳转功能添加可以通过不同tracker设置不同网址
  * - 2.添加占位符 {comment_url} 用于提取注释中的url
@@ -86,6 +91,7 @@
         if (storedConfigJson) {
             try {
                 const storedConfig = JSON.parse(storedConfigJson);
+                // 合并配置，确保新旧版本的兼容性
                 const mergedConfig = {
                     ...defaultConfig,
                     ...storedConfig,
@@ -122,7 +128,7 @@
 
     function showSettingsDialog() {
         if (document.getElementById('qbit-script-settings-overlay')) return;
-        const placeholders = '{name}, {save_path}, {full_path}, {full_path_mapped}, {hash}, {category}, {tracker}, {comment}, {comment_num}, {comment_url}';
+        const placeholders = '{name}, {save_path}, {full_path}, {full_path_mapped}, {hash}, {category}, {tracker}, {comment}, {comment_num}, {comment_url}, {comment_url|new.com}';
 
         document.body.insertAdjacentHTML('beforeend', `
             <div id="qbit-script-settings-overlay">
@@ -142,7 +148,11 @@
                              <div class="qbit-section-footer"><button id="qbit-add-submenu" class="qbit-btn">＋ 添加二级菜单</button></div>
                         </div>
                     </div>
-                    <div class="qbit-settings-footer"><button id="qbit-settings-save" class="qbit-btn qbit-btn-primary">保存设置</button></div>
+                    <div class="qbit-settings-footer">
+                        <button id="qbit-settings-import" class="qbit-btn">导入</button>
+                        <button id="qbit-settings-export" class="qbit-btn">导出</button>
+                        <button id="qbit-settings-save" class="qbit-btn qbit-btn-primary">保存设置</button>
+                    </div>
                 </div>
             </div>`);
 
@@ -179,10 +189,15 @@
         else if (e.target.classList.contains('qbit-delete-group-btn')) {
             if (confirm("确定要删除这个二级菜单及其所有命令吗？")) e.target.closest('.qbit-command-group').remove();
         }
-        else if (e.target.classList.contains('qbit-add-tracker-template-btn')) addTrackerTemplateUI(e.target.previousElementSibling);
+        else if (e.target.classList.contains('qbit-add-tracker-template-btn')) {
+             const container = e.target.closest('.qbit-tracker-details').querySelector('.cmd-tracker-templates-container');
+             addTrackerTemplateUI(container);
+        }
         else if (e.target.classList.contains('qbit-delete-tracker-row')) e.target.closest('.qbit-tracker-template-row').remove();
         else if (e.target.closest('.icon-picker-trigger')) openIconPicker(e.target.closest('.icon-picker-trigger'));
         else if (e.target.id === 'qbit-settings-save') handleSave();
+        else if (e.target.id === 'qbit-settings-export') handleExport();
+        else if (e.target.id === 'qbit-settings-import') handleImport();
         else if (e.target.id === 'qbit-settings-close') closeDialog();
     }
 
@@ -191,6 +206,9 @@
         container.innerHTML = '';
         addCommandGroupUI('', []); // Root group
         const renderedSubmenus = new Set();
+        // 确保 submenuSettings 存在
+        if (!currentConfig.submenuSettings) currentConfig.submenuSettings = {};
+
         currentConfig.commands.forEach(cmd => {
             if (cmd.submenu) {
                 if (!renderedSubmenus.has(cmd.submenu)) {
@@ -270,8 +288,11 @@
                     <select class="cmd-type"><option value="copy">复制</option><option value="open">跳转</option></select>
                 </div>
                 <div class="qbit-form-group"><input type="text" class="cmd-template" placeholder="默认 命令/链接模板"></div>
-                <div class="cmd-tracker-templates-container"></div>
-                <button class="qbit-btn qbit-btn-small qbit-add-tracker-template-btn">＋ 添加站点特定网址</button>
+                <details class="qbit-tracker-details">
+                    <summary>站点特定网址</summary>
+                    <div class="cmd-tracker-templates-container"></div>
+                    <button class="qbit-btn qbit-btn-small qbit-add-tracker-template-btn">＋ 添加</button>
+                </details>
             </div>
             <div class="qbit-card-actions-col">
                  <label class="qbit-toggle-switch" title="启用/禁用"><input type="checkbox" class="cmd-enabled"><span></span></label>
@@ -286,12 +307,11 @@
         card.querySelector('.cmd-template').value = cmd?.template || '';
         card.querySelector('.cmd-enabled').checked = !cmd || cmd.enabled;
 
+        const trackerDetails = card.querySelector('.qbit-tracker-details');
         const trackerContainer = card.querySelector('.cmd-tracker-templates-container');
-        const addTrackerBtn = card.querySelector('.qbit-add-tracker-template-btn');
+
         const toggleTrackerUI = () => {
-            const isVisible = typeSelect.value === 'open';
-            trackerContainer.style.display = isVisible ? 'block' : 'none';
-            addTrackerBtn.style.display = isVisible ? 'inline-block' : 'none';
+            trackerDetails.style.display = typeSelect.value === 'open' ? 'block' : 'none';
         };
         typeSelect.addEventListener('change', toggleTrackerUI);
 
@@ -316,13 +336,15 @@
         container.appendChild(row);
     }
 
-
-    async function handleSave() {
+    function buildConfigFromUI() {
         let newMappings;
         try {
             newMappings = JSON.parse(document.getElementById('qbit-settings-mappings').value);
             if (!Array.isArray(newMappings)) throw new Error("顶层结构必须是数组");
-        } catch (e) { alert(`路径映射规则JSON格式错误！\n${e.message}`); return; }
+        } catch (e) {
+            alert(`路径映射规则JSON格式错误！\n${e.message}`);
+            return null;
+        }
 
         const newCommands = [];
         const newSubmenuSettings = {};
@@ -357,17 +379,64 @@
                 newCommands.push(commandData);
             });
         });
-
-        const newConfig = {
+        return {
             isPathMappingEnabled: document.getElementById('qbit-settings-enable-mapping').checked,
             pathMappings: newMappings, submenuSettings: newSubmenuSettings, commands: newCommands
         };
+    }
+
+    async function handleSave() {
+        const newConfig = buildConfigFromUI();
+        if (!newConfig) return;
+
         await saveConfig(newConfig);
         currentConfig = newConfig;
         closeDialog();
         showNotification('设置已保存!', 'success');
         rebuildMenu();
     }
+
+    function handleExport() {
+        const configToExport = buildConfigFromUI();
+        if (!configToExport) return;
+        try {
+            const configString = JSON.stringify(configToExport);
+            const encodedConfig = btoa(unescape(encodeURIComponent(configString))); // 支持中文
+            copyToClipboard(encodedConfig);
+            showNotification('配置已复制到剪贴板', 'info');
+        } catch(e) {
+            alert('导出配置失败: ' + e.message);
+        }
+    }
+
+    function handleImport() {
+        const encodedConfig = prompt("请粘贴要导入的配置字符串:");
+        if (!encodedConfig) return;
+
+        try {
+            const configString = decodeURIComponent(escape(atob(encodedConfig)));
+            const importedConfig = JSON.parse(configString);
+
+            // 简单验证一下配置
+            if (!importedConfig || !Array.isArray(importedConfig.commands)) {
+                throw new Error("配置格式无效。");
+            }
+
+            // 使用导入的配置更新当前配置并刷新UI
+            currentConfig = {
+                ...defaultConfig,
+                ...importedConfig,
+                submenuSettings: { ...defaultConfig.submenuSettings, ...(importedConfig.submenuSettings || {}) }
+            };
+            document.getElementById('qbit-settings-enable-mapping').checked = currentConfig.isPathMappingEnabled;
+            document.getElementById('qbit-settings-mappings').value = JSON.stringify(currentConfig.pathMappings, null, 4);
+            renderSettingsUI();
+            showNotification('配置导入成功!', 'success');
+        } catch(e) {
+            alert('导入失败，请检查配置字符串是否正确。\n错误: ' + e.message);
+        }
+    }
+
 
     function closeDialog() {
         document.getElementById('qbit-icon-picker-panel')?.remove();
@@ -529,7 +598,26 @@
                 }
             }
 
-            let result = resultTemplate;
+            // 新增: 处理带域名替换的占位符 {comment|xx.com} 和 {comment_url|xx.com}
+            resultTemplate = resultTemplate.replace(/{(\w+)\|([^}]+)}/g, (match, placeholderName, newDomain) => {
+                if (placeholderName === 'comment' || placeholderName === 'comment_url') {
+                    // 确定原始URL
+                    const originalUrl = placeholderName === 'comment_url' ? commentUrl : (commentText.match(/(https?:\/\/[^\s]+)/) || [''])[0];
+
+                    if (originalUrl) {
+                        try {
+                            const urlObj = new URL(originalUrl);
+                            // 重组URL, 保留协议和路径
+                            return `${urlObj.protocol}//${newDomain}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+                        } catch(e) {
+                            return originalUrl; // 如果原始URL无效，则返回自身
+                        }
+                    }
+                }
+                return match; // 如果不是指定占位符，原样返回
+            });
+
+            // 原始占位符替换
             const placeholders = {
                 '{name}': data.name,
                 '{save_path}': data.save_path,
@@ -542,6 +630,7 @@
                 '{comment_num}': commentNum,
                 '{comment_url}': commentUrl
             };
+            let result = resultTemplate;
             for (const key in placeholders) { result = result.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), placeholders[key]); }
             return result;
         }).filter(Boolean);
@@ -655,13 +744,17 @@
             .qbit-card-actions-col { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
             .qbit-delete-command { background: #fbe9e7; color: var(--qb-danger); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
 
-            .cmd-tracker-templates-container { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 6px; }
+            .qbit-tracker-details { border: 1px solid #eee; border-radius: 4px; padding: 0; margin-top: 8px; }
+            .qbit-tracker-details summary { padding: 8px; cursor: pointer; font-weight: 500; color: #555; background-color: #f9f9f9; }
+            .qbit-tracker-details[open] summary { border-bottom: 1px solid #eee; }
+            .cmd-tracker-templates-container { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+            .qbit-add-tracker-template-btn { margin: 0 8px 8px; align-self: flex-start; }
+
             .qbit-tracker-template-row { display: flex; gap: 6px; align-items: center; }
             .qbit-tracker-template-row input { font-size: 12px; padding: 6px 8px; }
             .qbit-tracker-key { flex: 1; }
             .qbit-tracker-value { flex: 2; }
             .qbit-delete-tracker-row { background: #ffebee; color: #c62828; border: none; border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-weight: bold; flex-shrink: 0; }
-            .qbit-add-tracker-template-btn { align-self: flex-start; margin-top: 4px; }
 
             .drag-handle { cursor: grab; color: #aaa; padding: 0 8px; font-size: 20px; align-self: stretch; display: flex; align-items: center; }
             .dragging { opacity: 0.5; background: #e3f2fd; }
@@ -669,7 +762,7 @@
             #drag-placeholder:not(.qbit-command-group) { min-height: 60px; }
             #drag-placeholder.qbit-command-group { min-height: 100px; }
 
-            .qbit-settings-footer { text-align: right; padding: 16px 24px; border-top: 1px solid var(--qb-border); background: #fcfcfc; }
+            .qbit-settings-footer { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--qb-border); background: #fcfcfc; }
             .qbit-btn { padding: 8px 16px; border: 1px solid #ccc; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; background: white; }
             .qbit-btn:hover { border-color: #999; }
             .qbit-btn-small { padding: 6px 12px; font-size: 12px; }
