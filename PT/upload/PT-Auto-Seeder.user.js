@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.4
+// @version      1.0.5
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
@@ -26,6 +26,8 @@
 // ==/UserScript==
 
 /* 更新日志
+ * v1.0.5 (由 Gemini 助理修改)
+ * - [优化] 仅在“域名推送覆盖”列表中的域名，才会启用“下载模式”。
  * v1.0.4
  * - [新增] 可以设置自动下载
  * - [修复] “已配置站点”支持删除
@@ -256,7 +258,7 @@
         .pt-aas-sec-body { padding: 12px; display: block;} .pt-aas-section.collapsed .pt-aas-sec-body { display: none; }
         .pt-aas-form-group { margin-bottom: 10px; } .pt-aas-form-group label { display: block; margin-bottom: 4px; color: var(--pt-aas-text-sub); }
         .pt-aas-input, .pt-aas-textarea, .pt-aas-select { width: 100%; box-sizing: border-box; padding: 8px; background: var(--pt-aas-input-bg); border: 1px solid var(--pt-aas-border); color: var(--pt-aas-text); border-radius: 4px; }
-        .pt-aas-textarea { min高度: 80px; resize: vertical; }
+        .pt-aas-textarea { min-height: 80px; resize: vertical; }
         .pt-aas-input:focus, .pt-aas-textarea:focus, .pt-aas-select:focus { outline: 1px solid var(--pt-aas-accent); border-color: var(--pt-aas-accent); }
         .pt-aas-btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; background: #555; color: white; transition: background 0.2s; }
         .pt-aas-btn.primary { background: var(--pt-aas-accent); } .pt-aas-btn.primary:hover { background: var(--pt-aas-accent-hover); }
@@ -885,7 +887,7 @@
             return null;
         },
 
-        // 根据覆盖策略，选择 qB + 模式（默认下载模式）
+        // 根据覆盖策略，选择 qB + 模式。仅在覆盖设置中推送下载模式，其他默认为做种状态。
         resolveTarget: () => {
             const host = Utils.getCurrentHost();
             const overrides = Data.getDomainOverrides();
@@ -893,11 +895,12 @@
             if (conf) {
                 const qb = Data.getQBs().find(q => q.id === conf.qbId) || null;
                 if (qb) {
+                    // 找到了覆盖配置，使用指定的qB和下载模式
                     return { qb, isOverride: true, downloadMode: !!conf.downloadMode };
                 }
             }
-            // 默认 downloadMode: true
-            return { qb: Data.getActiveQb(), isOverride: false, downloadMode: true };
+            // 默认情况：使用活动qB，并设置为做种状态 (downloadMode: false)
+            return { qb: Data.getActiveQb(), isOverride: false, downloadMode: false };
         },
 
         pushTorrent: async (isForced = false) => {
@@ -913,7 +916,7 @@
 
             const cleanName = Utils.cleanTorrentName(torrentInfo.name);
 
-            // 模式：下载模式（默认） vs 做种模式
+            // 模式：做种模式 (skipChecking=true) vs 下载模式 (skipChecking=false)
             const mode = target.downloadMode
                 ? { skipChecking: false, paused: false } // 下载：立即开始校验与下载
                 : { skipChecking: true,  paused: false }; // 做种：跳过校验，直接做种
