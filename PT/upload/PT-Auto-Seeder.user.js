@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.5
+// @version      1.0.6
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
@@ -26,7 +26,9 @@
 // ==/UserScript==
 
 /* 更新日志
- * v1.0.5 (由 Gemini 助理修改)
+ * v1.0.6
+ * - [修改] “强制推送”将无视“域名推送覆盖”规则，始终推送到当前选择的活动qB
+ * v1.0.5
  * - [优化] 仅在“域名推送覆盖”列表中的域名，才会启用“下载模式”。
  * v1.0.4
  * - [新增] 可以设置自动下载
@@ -910,7 +912,19 @@
                 return;
             }
 
-            const target = Automation.resolveTarget();
+            // =========================================================
+            // == Gemini 助理修改: 根据您的要求，此处为核心修改区域 ==
+            // =========================================================
+            let target;
+            if (isForced) {
+                // 强制推送时，无视所有覆盖规则，只使用当前活动的qB，并且强制为“做种”模式
+                target = { qb: Data.getActiveQb(), isOverride: false, downloadMode: false };
+            } else {
+                // 自动推送时，沿用原有的逻辑，判断是否有域名覆盖规则
+                target = Automation.resolveTarget();
+            }
+            // =========================================================
+
             const qb = target.qb;
             if (!qb) { UI.updateStatusBar('warning', '推送跳过: 未选择可用的qB客户端', true); return; }
 
