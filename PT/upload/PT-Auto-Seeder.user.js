@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         PT Auto Seeder
 // @namespace    https://github.com/akina-up/script
-// @version      1.0.6
+// @version      1.0.7
 // @description  (由 Gemini 2.5 Pro 助理)PT站发布成功后自动推送到qBittorrent，推送成功或失败时临时显示结果（包含分类、保存路径、qB名称），并可管理推送记录。
 // @author       akina
 // @match        http*://*/upload.php*
 // @match        http*://*/details.php*
 // @match        http*://*/edit.php*
 // @match        http*://*/torrents.php*
-// @match        https://kp.m-team.cc/*
+// @match        https://*.m-team.cc/*
 // @match        https://*/torrents*
 // @match        https://totheglory.im/t/*
 // @match        https://beyond-hd.me/*
@@ -26,6 +26,10 @@
 // ==/UserScript==
 
 /* 更新日志
+ * v1.0.7
+ * - [新增] 馒头推送(仅支持手动)
+ * - [新增] 可以设置标签
+ * - [新增] 可以设置延迟
  * v1.0.6
  * - [修改] “强制推送”将无视“域名推送覆盖”规则，始终推送到当前选择的活动qB
  * v1.0.5
@@ -64,14 +68,17 @@
         QBS: 'pt_aas_qbs_list',
         ACTIVE_QB: 'pt_aas_active_qb_id',
         SITES: 'pt_aas_site_configs',
-        HISTORY: 'pt_aas_history_', // prefix
+        HISTORY: 'pt_aas_history_',
         UI_POS: 'pt_aas_ui_position',
         SETTINGS_UI_OPEN: 'pt_aas_settings_ui_is_open',
+        SETTINGS_UI_POS: 'pt_aas_settings_ui_position',
         HISTORY_UI_POS: 'pt_aas_history_ui_position',
         HISTORY_UI_OPEN: 'pt_aas_history_ui_is_open',
         EXCLUDED_URLS: 'pt_aas_excluded_urls',
         ICON_SCALE: 'pt_aas_icon_scale',
-        DOMAIN_OVERRIDES: 'pt_aas_domain_overrides' // { [host]: { qbId, downloadMode, dlUpLimit } }
+        DOMAIN_OVERRIDES: 'pt_aas_domain_overrides',
+        GLOBAL_QUEUE: 'pt_aas_global_task_queue',
+        GLOBAL_SETTINGS: 'pt_aas_global_settings'
     };
 
     const ICON_CONTAINER_ID = 'pt-aas-icon-container';
@@ -96,7 +103,6 @@
         setSites: (sites) => GM_setValue(STORAGE_KEYS.SITES, sites),
         getSiteConfig: (hostname) => Data.getSites()[hostname] || null,
 
-        // 覆盖
         getDomainOverrides: () => GM_getValue(STORAGE_KEYS.DOMAIN_OVERRIDES, {}),
         setDomainOverrides: (obj) => GM_setValue(STORAGE_KEYS.DOMAIN_OVERRIDES, obj),
 
@@ -137,6 +143,23 @@
         setExcludedUrls: (urls) => GM_setValue(STORAGE_KEYS.EXCLUDED_URLS, urls),
         getIconScale: () => GM_getValue(STORAGE_KEYS.ICON_SCALE, 100),
         setIconScale: (scale) => GM_setValue(STORAGE_KEYS.ICON_SCALE, scale),
+
+        // 全局设置 (延迟)
+        getGlobalSettings: () => GM_getValue(STORAGE_KEYS.GLOBAL_SETTINGS, { delaySeconds: 0 }),
+        setGlobalSettings: (settings) => GM_setValue(STORAGE_KEYS.GLOBAL_SETTINGS, settings),
+
+        // 队列管理
+        getQueue: () => GM_getValue(STORAGE_KEYS.GLOBAL_QUEUE, []),
+        addToQueue: (task) => {
+            let q = Data.getQueue();
+            q.push(task);
+            GM_setValue(STORAGE_KEYS.GLOBAL_QUEUE, q);
+        },
+        removeFromQueue: (taskId) => {
+            let q = Data.getQueue();
+            q = q.filter(t => t.id !== taskId);
+            GM_setValue(STORAGE_KEYS.GLOBAL_QUEUE, q);
+        }
     };
 
     // ===========================
@@ -176,26 +199,30 @@
             });
         }
         /**
-         * @param {Blob} torrentBlob
+         * @param {Blob|string} torrentSource Blob or URL string
          * @param {Object|null} siteSettings
          * @param {Object} mode { skipChecking: boolean, paused: boolean }
          */
-        async addTorrent(torrentBlob, siteSettings, mode = { skipChecking: false, paused: false }) {
+        async addTorrent(torrentSource, siteSettings, mode = { skipChecking: false, paused: false }) {
             try { await this.login(); } catch (e) { return { success: false, message: `qB 认证失败: ${e}` }; }
             return new Promise((resolve) => {
                 const formData = new FormData();
-                formData.append("torrents", torrentBlob, "torrent.torrent");
+
+                if (typeof torrentSource === 'string') {
+                    formData.append("urls", torrentSource);
+                } else {
+                    formData.append("torrents", torrentSource, "torrent.torrent");
+                }
 
                 if (this.config.path) formData.append("savepath", this.config.path);
                 if (this.config.cat) formData.append("category", this.config.cat);
+                if (this.config.tags) formData.append("tags", this.config.tags);
 
-                // 模式
                 formData.append("skip_checking", String(!!mode.skipChecking));
                 formData.append("paused", String(!!mode.paused));
 
                 if (siteSettings) {
                     if (siteSettings.upLimit) formData.append("upLimit", Utils.mibToBytes(siteSettings.upLimit));
-                    if (siteSettings.superSeed) formData.append("super_seeding", siteSettings.superSeed.toString());
                 }
 
                 GM_xmlhttpRequest({
@@ -221,7 +248,7 @@
             --pt-aas-bg: rgba(30, 30, 35, 0.95); --pt-aas-text: #eee; --pt-aas-text-sub: #aaa; --pt-aas-accent: #3498db;
             --pt-aas-accent-hover: #2980b9; --pt-aas-success: #27ae60; --pt-aas-danger: #c0392b; --pt-aas-warning: #f39c12;
             --pt-aas-border: #444; --pt-aas-input-bg: #2c2c32; --pt-aas-info-bg: #2980b9;
-            --pt-aas-download: #8e44ad; /* 下载模式通知色（覆盖/默认） */
+            --pt-aas-download: #8e44ad;
         }
         #${STATUS_BAR_ID} {
             position: fixed; top: 0; left: 0; right: 0; height: 28px; padding: 0 15px; font-size: 14px; color: white;
@@ -268,9 +295,6 @@
         .pt-aas-btn-group { display: flex; gap: 5px; flex-wrap: wrap; }
         .pt-aas-qb-selector-btn { background: transparent; border: 1px solid var(--pt-aas-border); color: var(--pt-aas-text-sub); flex: 1; min-width: 60px; }
         .pt-aas-qb-selector-btn.active { background: var(--pt-aas-accent); color: white; border-color: var(--pt-aas-accent); }
-        .pt-aas-toggle-btn { background: #555; color: #aaa; display: inline-flex; align-items: center; gap: 5px; }
-        .pt-aas-toggle-btn.on { background: var(--pt-aas-success); color: white; }
-        .pt-aas-toggle-btn::before { content: 'OFF'; } .pt-aas-toggle-btn.on::before { content: 'ON'; }
         .pt-aas-table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
         .pt-aas-table th { text-align: left; color: var(--pt-aas-text-sub); padding: 4px; border-bottom: 1px solid var(--pt-aas-border); }
         .pt-aas-table th:nth-child(1) { width: 40%; } .pt-aas-table th:nth-child(4) { width: 15%; text-align: center; }
@@ -377,6 +401,7 @@
                                 <div class="pt-aas-form-group"><label>用户名</label><input class="pt-aas-input" id="qb-user"></div>
                                 <div class="pt-aas-form-group"><label>密码</label><input class="pt-aas-input" type="text" id="qb-pass"></div>
                                 <div class="pt-aas-form-group"><label>分类 (可选)</label><input class="pt-aas-input" id="qb-cat"></div>
+                                <div class="pt-aas-form-group"><label>标签 (Tags, 逗号分隔)</label><input class="pt-aas-input" id="qb-tags" placeholder="Auto, PT"></div>
                                 <div class="pt-aas-form-group"><label>保存路径 (可选)</label><input class="pt-aas-input" id="qb-path"></div>
                                 <div class="pt-aas-btn-group">
                                     <button class="pt-aas-btn primary" id="pt-aas-save-qb-btn">保存 qB</button>
@@ -394,7 +419,6 @@
                             <div class="pt-aas-form-group"><label>站点别名 (可选)</label><input class="pt-aas-input" id="site-alias" placeholder="例如: 柠檬HD"></div>
                             <div class="pt-aas-form-group"><label>站点域名 (Host)</label><div class="pt-aas-row"><input class="pt-aas-input" id="site-host" placeholder="xxx.com"><button class="pt-aas-btn small" id="pt-aas-get-host-btn">获取当前</button></div></div>
                             <div class="pt-aas-form-group"><label>上传限速 (MiB/s, 0为不限)</label><input type="number" step="0.1" class="pt-aas-input" id="site-uplimit" placeholder="0"></div>
-                            <div class="pt-aas-form-group" style="display:flex; justify-content:space-between; align-items:center;"><label style="margin:0">超级做种模式</label><button class="pt-aas-btn pt-aas-toggle-btn" id="site-superseed-btn" data-val="false"></button></div>
                             <div class="pt-aas-btn-group"><button class="pt-aas-btn primary" id="pt-aas-save-site-btn">保存站点配置</button></div>
                             <div class="pt-aas-mt-10"><strong>已配置站点:</strong></div>
                             <div id="pt-aas-saved-site-list" class="pt-aas-mt-10"></div>
@@ -437,9 +461,14 @@
                         <div class="pt-aas-sec-title">高级设置</div>
                         <div class="pt-aas-sec-body">
                          <div class="pt-aas-form-group">
+                             <label>延迟推送 (秒)</label>
+                             <input type="number" id="global-delay-seconds" class="pt-aas-input" placeholder="0" title="进入队列后等待多久再推送，即便页面关闭只要浏览器有其他脚本页面打开即可执行">
+                             <div class="pt-aas-note">即使关闭当前页面，只要浏览器中有任意安装了此脚本的PT页面打开，倒计时结束后也会自动推送。</div>
+                         </div>
+                         <div class="pt-aas-form-group">
                             <label>推送排除列表 (每行一个域名)</label>
                             <textarea class="pt-aas-textarea" id="excluded-urls-textarea" placeholder="e.g.\nexample.com\nanother.site.net"></textarea>
-                            <button class="pt-aas-btn primary pt-aas-mt-10" id="save-excluded-urls-btn">保存排除列表</button>
+                            <button class="pt-aas-btn primary pt-aas-mt-10" id="save-advanced-btn">保存高级设置</button>
                          </div>
                          <div class="pt-aas-form-group">
                             <label>悬浮图标大小</label>
@@ -519,7 +548,6 @@
 
             // 站点
             document.getElementById('pt-aas-get-host-btn').onclick = () => { document.getElementById('site-host').value = Utils.getCurrentHost(); };
-            document.getElementById('site-superseed-btn').onclick = (e) => { const isOn = !e.target.classList.contains('on'); e.target.dataset.val = isOn; e.target.classList.toggle('on', isOn); };
             document.getElementById('pt-aas-save-site-btn').onclick = UI.saveSite;
 
             // 覆盖
@@ -531,10 +559,14 @@
             const scaleSlider = document.getElementById('icon-scale-slider');
             scaleSlider.oninput = (e) => UI.updateIconScale(e.target.value);
             scaleSlider.onchange = (e) => { Data.setIconScale(e.target.value); };
-            document.getElementById('save-excluded-urls-btn').onclick = () => {
+            document.getElementById('save-advanced-btn').onclick = () => {
                 const urls = document.getElementById('excluded-urls-textarea').value;
                 Data.setExcludedUrls(urls);
-                alert('排除列表已保存。');
+
+                const delay = parseInt(document.getElementById('global-delay-seconds').value) || 0;
+                Data.setGlobalSettings({ delaySeconds: delay });
+
+                alert('高级设置已保存。');
             };
         },
         bindHistoryEvents: () => {
@@ -575,11 +607,31 @@
             const scale = Data.getIconScale();
             document.getElementById('icon-scale-slider').value = scale;
             document.getElementById('icon-scale-label').textContent = `${scale}%`;
+            document.getElementById('global-delay-seconds').value = Data.getGlobalSettings().delaySeconds;
         },
-        clearQbForm: () => ['qb-id','qb-name','qb-url','qb-user','qb-pass','qb-cat','qb-path'].forEach(id => document.getElementById(id).value = ''),
-        fillQbForm: (qb) => { document.getElementById('qb-id').value = qb.id; document.getElementById('qb-name').value = qb.name; document.getElementById('qb-url').value = qb.url; document.getElementById('qb-user').value = qb.user; document.getElementById('qb-pass').value = qb.pass; document.getElementById('qb-cat').value = qb.cat || ''; document.getElementById('qb-path').value = qb.path || ''; },
+        clearQbForm: () => ['qb-id','qb-name','qb-url','qb-user','qb-pass','qb-cat','qb-path','qb-tags'].forEach(id => document.getElementById(id).value = ''),
+        fillQbForm: (qb) => {
+            document.getElementById('qb-id').value = qb.id;
+            document.getElementById('qb-name').value = qb.name;
+            document.getElementById('qb-url').value = qb.url;
+            document.getElementById('qb-user').value = qb.user;
+            document.getElementById('qb-pass').value = qb.pass;
+            document.getElementById('qb-cat').value = qb.cat || '';
+            document.getElementById('qb-path').value = qb.path || '';
+            document.getElementById('qb-tags').value = qb.tags || '';
+        },
         saveQb: () => {
-            const id = document.getElementById('qb-id').value || Utils.generateId(), newQb = { id, name: document.getElementById('qb-name').value.trim() || 'Unnamed', url: document.getElementById('qb-url').value.trim(), user: document.getElementById('qb-user').value.trim(), pass: document.getElementById('qb-pass').value.trim(), cat: document.getElementById('qb-cat').value.trim(), path: document.getElementById('qb-path').value.trim() };
+            const id = document.getElementById('qb-id').value || Utils.generateId(),
+                  newQb = {
+                      id,
+                      name: document.getElementById('qb-name').value.trim() || 'Unnamed',
+                      url: document.getElementById('qb-url').value.trim(),
+                      user: document.getElementById('qb-user').value.trim(),
+                      pass: document.getElementById('qb-pass').value.trim(),
+                      cat: document.getElementById('qb-cat').value.trim(),
+                      path: document.getElementById('qb-path').value.trim(),
+                      tags: document.getElementById('qb-tags').value.trim()
+                  };
             if (!newQb.url) return alert('URL is required');
             let qbs = Data.getQBs(), idx = qbs.findIndex(q => q.id === id); (idx > -1) ? qbs[idx] = newQb : qbs.push(newQb);
             Data.setQBs(qbs); UI.clearQbForm(); UI.renderAll(); if (!Data.getActiveQbId()) { Data.setActiveQbId(id); UI.renderActiveQbSelector(); UI.renderHistorySelectors(); }
@@ -618,16 +670,15 @@
             };
         },
 
-        // 站点设置
+        // 站点设置 (移除 Super Seed)
         saveSite: () => {
             const host = document.getElementById('site-host').value.trim(); if (!host) return alert('Host required');
             const sites = Data.getSites();
-            sites[host] = { alias: document.getElementById('site-alias').value.trim(), upLimit: document.getElementById('site-uplimit').value, superSeed: document.getElementById('site-superseed-btn').dataset.val === 'true' };
+            sites[host] = { alias: document.getElementById('site-alias').value.trim(), upLimit: document.getElementById('site-uplimit').value };
             Data.setSites(sites); UI.renderSiteList();
             ['site-host', 'site-alias', 'site-uplimit'].forEach(id => document.getElementById(id).value = '');
-            const ssBtn = document.getElementById('site-superseed-btn'); ssBtn.dataset.val = 'false'; ssBtn.classList.remove('on');
         },
-        fillSiteForm: (host, config) => { document.getElementById('site-host').value = host; document.getElementById('site-alias').value = config.alias || ''; document.getElementById('site-uplimit').value = config.upLimit || ''; const ssBtn = document.getElementById('site-superseed-btn'); ssBtn.dataset.val = config.superSeed ? 'true' : 'false'; ssBtn.classList.toggle('on', !!config.superSeed); },
+        fillSiteForm: (host, config) => { document.getElementById('site-host').value = host; document.getElementById('site-alias').value = config.alias || ''; document.getElementById('site-uplimit').value = config.upLimit || ''; },
         renderSiteList: () => {
             const container = document.getElementById('pt-aas-saved-site-list');
             container.innerHTML = '';
@@ -639,7 +690,6 @@
                 let details = [];
                 if (conf.upLimit && parseFloat(conf.upLimit) > 0) details.push(`限速: ${conf.upLimit}MiB/s`);
                 else details.push('不限速');
-                if (conf.superSeed) details.push('超级做种');
                 const detailsText = details.join(' | ');
 
                 const siteDisplayName = conf.alias
@@ -825,12 +875,79 @@
     };
 
     // ===========================
+    // M-Team Specific Helper
+    // ===========================
+    const MTeam = {
+        getDownloadLink: async () => {
+            return new Promise((resolve, reject) => {
+                let tokenFound = false;
+
+                // Hook XHR
+                const originalOpen = XMLHttpRequest.prototype.open;
+                const hookId = Date.now();
+
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    this.addEventListener('load', function() {
+                        if (url.includes('/api/torrent/genDlToken') && !tokenFound) {
+                            try {
+                                const res = JSON.parse(this.responseText);
+                                if (res.code === '0' && res.data) {
+                                    tokenFound = true;
+                                    resolve(res.data);
+                                }
+                            } catch(e) { console.error("M-Team JSON parse error", e); }
+                        }
+                    });
+                    originalOpen.apply(this, arguments);
+                };
+
+                // Click Download Button
+                // 查找 AntD 按钮，包含“下載”或“Download”文本
+                const buttons = Array.from(document.querySelectorAll('button.ant-btn'));
+                const downloadBtn = buttons.find(btn => {
+                    const txt = btn.textContent.trim();
+                    return txt.includes('下載') || txt.includes('Download');
+                }) || document.querySelector('button.ant-btn-primary'); // 兜底
+
+                if (downloadBtn) {
+                    downloadBtn.click();
+                } else {
+                    reject("未找到 M-Team 下载按钮");
+                    return;
+                }
+
+                // Timeout
+                setTimeout(() => {
+                    if (!tokenFound) reject("获取真实链接超时");
+                }, 5000);
+            });
+        }
+    };
+
+    // ===========================
     // Main Automation Logic
     // ===========================
     const Automation = {
-        parsePageForTorrent: () => {
+        parsePageForTorrent: async () => {
             const url = window.location.href;
             const doc = document;
+
+            // M-Team (New React Site)
+            if (url.includes('m-team.cc/detail/')) {
+                // 标题通常在 .ant-typography h2 或 h3
+                const titleEl = doc.querySelector('.ant-typography h2, .ant-typography h3') || doc.querySelector('h1') || doc.title;
+                const title = titleEl.textContent ? titleEl.textContent.trim() : "M-Team Torrent";
+
+                try {
+                    const link = await MTeam.getDownloadLink();
+                    return { link, name: title };
+                } catch (e) {
+                    console.error("M-Team fetch error:", e);
+                    throw new Error("M-Team 下载链接获取失败: " + e);
+                }
+            }
+
+            // Standard Parsing (Sync)
             let torrentLink, torrentName;
 
             // BHD download_check
@@ -838,29 +955,14 @@
                 const nameElement = doc.querySelector('a.beta-link-blend[href*="/torrents/"]');
                 const linkElement = doc.querySelector('a.bhd-md-button[href*="/download/"]');
                 if (nameElement && linkElement) {
-                    torrentLink = linkElement.href;
-                    torrentName = nameElement.textContent.trim();
-                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                    return { link: new URL(linkElement.href, url).href, name: nameElement.textContent.trim() };
                 }
             }
 
             // TTG-like
             const ttgLink = Array.from(doc.querySelectorAll('a.index[href*="/dl/"], a[href*=".torrent"]')).find(a => a.href.includes('/dl/') && (a.href.includes('.torrent') || a.textContent.includes('.torrent')));
             if (ttgLink) {
-                torrentLink = ttgLink.href;
-                torrentName = ttgLink.textContent.trim();
-                return { link: new URL(torrentLink, url).href, name: torrentName };
-            }
-
-            // 旧 download_check
-            if (url.includes('download_check')) {
-                const nameElement = Array.from(doc.querySelectorAll('dt')).find(dt => dt.textContent.trim().toLowerCase() === 'name')?.nextElementSibling;
-                const linkElement = doc.querySelector('a.form__button[href*="/torrents/download/"]');
-                if (nameElement && linkElement) {
-                    torrentLink = linkElement.href;
-                    torrentName = nameElement.textContent.trim();
-                    return { link: new URL(torrentLink, url).href, name: torrentName };
-                }
+                return { link: ttgLink.href, name: ttgLink.textContent.trim() };
             }
 
             // details + badge-extra
@@ -871,25 +973,28 @@
                     'a[href*="/torrents/download/"][role="button"].badge-extra'
                 );
                 if (linkElement) {
-                    torrentLink = linkElement.href;
-                    torrentName = torrentNameH1.textContent.trim();
-                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                    return { link: linkElement.href, name: torrentNameH1.textContent.trim() };
                 }
             }
 
-            // 原逻辑
-            if (url.includes('details.php')) {
-                 const link = Array.from(doc.querySelectorAll('a[href*="download.php"]')).find(a => a.href.includes('id='));
+            // Classic details.php
+            if (url.includes('details.php') || url.includes('download_check')) {
+                 const link = Array.from(doc.querySelectorAll('a[href*="download.php"], a[href*="download/"]')).find(a => a.href.includes('id=') || a.href.includes('download/'));
                  if (link) {
-                    torrentLink = link.href;
-                    torrentName = link.textContent.trim() || doc.title;
-                    return { link: new URL(torrentLink, url).href, name: torrentName };
+                    // Try to find name in common places
+                    let name = doc.title;
+                    const h1 = doc.querySelector('h1');
+                    if (h1) name = h1.textContent.trim();
+                    else {
+                        const nameDt = Array.from(doc.querySelectorAll('dt')).find(dt => dt.textContent.trim().toLowerCase() === 'name');
+                        if (nameDt && nameDt.nextElementSibling) name = nameDt.nextElementSibling.textContent.trim();
+                    }
+                    return { link: link.href, name: name };
                  }
             }
             return null;
         },
 
-        // 根据覆盖策略，选择 qB + 模式。仅在覆盖设置中推送下载模式，其他默认为做种状态。
         resolveTarget: () => {
             const host = Utils.getCurrentHost();
             const overrides = Data.getDomainOverrides();
@@ -897,59 +1002,92 @@
             if (conf) {
                 const qb = Data.getQBs().find(q => q.id === conf.qbId) || null;
                 if (qb) {
-                    // 找到了覆盖配置，使用指定的qB和下载模式
                     return { qb, isOverride: true, downloadMode: !!conf.downloadMode };
                 }
             }
-            // 默认情况：使用活动qB，并设置为做种状态 (downloadMode: false)
             return { qb: Data.getActiveQb(), isOverride: false, downloadMode: false };
         },
 
         pushTorrent: async (isForced = false) => {
-            const torrentInfo = Automation.parsePageForTorrent();
-            if (!torrentInfo) {
-                if (isForced) UI.updateStatusBar('error', '推送失败: 在当前页面找不到有效的种子链接', true);
-                return;
+            try {
+                // 1. 获取种子信息 (部分站点如M-Team需要异步操作)
+                let torrentInfo;
+                try {
+                    torrentInfo = await Automation.parsePageForTorrent();
+                } catch (e) {
+                    UI.updateStatusBar('error', e.message, true);
+                    return;
+                }
+
+                if (!torrentInfo) {
+                    if (isForced) UI.updateStatusBar('error', '推送失败: 在当前页面找不到有效的种子链接', true);
+                    return;
+                }
+
+                // 2. 确定目标 qB
+                let target;
+                if (isForced) {
+                    target = { qb: Data.getActiveQb(), isOverride: false, downloadMode: false };
+                } else {
+                    target = Automation.resolveTarget();
+                }
+                const qb = target.qb;
+                if (!qb) { UI.updateStatusBar('warning', '推送跳过: 未选择可用的qB客户端', true); return; }
+
+                const cleanName = Utils.cleanTorrentName(torrentInfo.name);
+
+                // 3. 检查延迟推送设置
+                // 如果设置了延迟，并且不是强制推送（强制推送立即执行），则加入队列
+                const globalSettings = Data.getGlobalSettings();
+                if (!isForced && globalSettings.delaySeconds > 0) {
+                    const task = {
+                        id: Utils.generateId(),
+                        name: cleanName,
+                        link: torrentInfo.link,
+                        host: Utils.getCurrentHost(),
+                        url: window.location.href, // 记录来源URL
+                        target: target,
+                        executeTime: Date.now() + (globalSettings.delaySeconds * 1000)
+                    };
+                    Data.addToQueue(task);
+                    UI.updateStatusBar('info', `已加入队列，${globalSettings.delaySeconds}秒后推送 (请保持浏览器开启)`, true);
+                    return;
+                }
+
+                // 4. 执行推送 (立即)
+                await Automation.executePush(qb, torrentInfo.link, cleanName, target.downloadMode, window.location.href);
+
+            } catch (error) {
+                UI.updateStatusBar('error', `错误: ${error?.message || '未知错误'}`, true);
             }
+        },
 
-            // =========================================================
-            // == Gemini 助理修改: 根据您的要求，此处为核心修改区域 ==
-            // =========================================================
-            let target;
-            if (isForced) {
-                // 强制推送时，无视所有覆盖规则，只使用当前活动的qB，并且强制为“做种”模式
-                target = { qb: Data.getActiveQb(), isOverride: false, downloadMode: false };
-            } else {
-                // 自动推送时，沿用原有的逻辑，判断是否有域名覆盖规则
-                target = Automation.resolveTarget();
-            }
-            // =========================================================
+        // 核心推送逻辑，从 pushTorrent 分离以便队列复用
+        executePush: async (qb, link, cleanName, downloadMode, pageUrl) => {
+            const mode = downloadMode
+                ? { skipChecking: false, paused: false }
+                : { skipChecking: true,  paused: false };
 
-            const qb = target.qb;
-            if (!qb) { UI.updateStatusBar('warning', '推送跳过: 未选择可用的qB客户端', true); return; }
-
-            const cleanName = Utils.cleanTorrentName(torrentInfo.name);
-
-            // 模式：做种模式 (skipChecking=true) vs 下载模式 (skipChecking=false)
-            const mode = target.downloadMode
-                ? { skipChecking: false, paused: false } // 下载：立即开始校验与下载
-                : { skipChecking: true,  paused: false }; // 做种：跳过校验，直接做种
-
-            UI.updateStatusBar('loading', `正在推送: ${cleanName}${target.downloadMode ? '（下载模式）' : ''}`, true);
+            UI.updateStatusBar('loading', `正在推送: ${cleanName}${downloadMode ? '（下载模式）' : ''}`, true);
 
             try {
+                // 下载 Blob
+                // 注意：如果 link 是 M-Team 的 download token link，它可能有时效性
+                // 队列执行时，如果是在不同页面，GM_xmlhttpRequest 依然可以工作（带Cookie）
                 const blob = await new Promise((resolve, reject) => GM_xmlhttpRequest({
-                    method:"GET", url:torrentInfo.link, responseType:"blob",
-                    onload:r=>r.status===200?resolve(r.response):reject(r.status), onerror:reject
+                    method: "GET", url: link, responseType: "blob",
+                    // 确保带上可能的认证信息，如果是不同域
+                    anonymous: false,
+                    onload: r => r.status === 200 ? resolve(r.response) : reject(`下载种子文件失败: ${r.status}`),
+                    onerror: reject
                 }));
 
-                // 合成站点参数并在下载模式下应用覆盖限速
-                const host = Utils.getCurrentHost();
+                const host = new URL(pageUrl).hostname;
                 const siteCfg = Data.getSiteConfig(host) || {};
                 const ovr = Data.getDomainOverrides()[host];
 
                 const effectiveUpLimit =
-                    (target.downloadMode && ovr && ovr.dlUpLimit > 0) ? ovr.dlUpLimit :
+                    (downloadMode && ovr && ovr.dlUpLimit > 0) ? ovr.dlUpLimit :
                     (siteCfg.upLimit ? parseFloat(siteCfg.upLimit) : 0);
 
                 const mergedSiteSettings = {
@@ -960,45 +1098,75 @@
                 const result = await new QBClient(qb).addTorrent(blob, mergedSiteSettings, mode);
 
                 if (result.success) {
-                    Data.addHistory(qb.id, { name: cleanName, url: Utils.cleanUrl(window.location.href), host, time: Date.now() });
+                    Data.addHistory(qb.id, { name: cleanName, url: Utils.cleanUrl(pageUrl), host, time: Date.now() });
                     UI.renderHistory(qb.id);
 
-                    const messageParts = [ target.downloadMode ? '推送成功（下载）' : '推送成功' ];
+                    const messageParts = [ downloadMode ? '推送成功（下载）' : '推送成功' ];
                     messageParts.push(`qB: ${qb.name}`);
-                    if (qb.cat) messageParts.push(`分类: ${qb.cat}`);
-                    if (mergedSiteSettings.upLimit && mergedSiteSettings.upLimit > 0) {
-                        messageParts.push(`限速: ${mergedSiteSettings.upLimit}MiB/s`);
-                    }
+                    if (qb.tags) messageParts.push(`标签: ${qb.tags}`);
+                    if (effectiveUpLimit > 0) messageParts.push(`限速: ${effectiveUpLimit} MiB/s`);
 
-                    UI.updateStatusBar(target.downloadMode ? 'download' : 'success', messageParts.join(' | '), true);
+                    UI.updateStatusBar(downloadMode ? 'download' : 'success', messageParts.join(' | '), true);
+
                 } else {
                      throw new Error(result.message);
                 }
             } catch (error) {
-                UI.updateStatusBar('error', `推送失败: ${error?.message || '网络错误'} | qB: ${qb.name}`, true);
+                console.error(error);
+                UI.updateStatusBar('error', `推送失败: ${error?.message || '网络错误'}`, true);
+            }
+        },
+
+        // 队列处理器 (Worker)
+        queueWorker: async () => {
+            const queue = Data.getQueue();
+            if (queue.length === 0) return;
+
+            const now = Date.now();
+            const readyTasks = queue.filter(t => t.executeTime <= now);
+
+            if (readyTasks.length > 0) {
+                // 处理任务
+                for (const task of readyTasks) {
+                    console.log(`[PT-AAS] Processing queued task: ${task.name}`);
+                    // 从队列移除防止重复执行（多个标签页同时运行时，简单的并发控制）
+                    Data.removeFromQueue(task.id);
+
+                    await Automation.executePush(
+                        task.target.qb,
+                        task.link,
+                        task.name,
+                        task.target.downloadMode,
+                        task.url
+                    );
+                }
             }
         },
 
         checkAndRun: async () => {
             const url = window.location.href;
             const excluded = Data.getExcludedUrls().split('\n').filter(Boolean).map(u => u.trim());
-            if(excluded.some(ex => url.includes(ex))) {
-                console.log("PT AAS: URL on exclusion list, skipping automatic push.");
-                return;
-            }
+            if(excluded.some(ex => url.includes(ex))) return;
 
+            // 1. 检测是否是普通站点的发布完成页
             if (/uploaded=1(&offer=1)?$/.test(url) || url.includes('download_check')) {
                 console.log("PT AAS: Upload success page detected, attempting to push.");
                 Automation.pushTorrent(false);
+                return;
             }
+
+            // 2. M-Team 逻辑:
+            // 用户要求移除自动推送。保留代码结构以便未来扩展，但目前为空。
         },
 
         quickAction: () => {
             const path = window.location.pathname;
             let target;
 
-            if (path.includes('/upload.php')) {
+            if (path.includes('/upload.php') || path.includes('/upload')) {
                 target = document.querySelector('input#qr[type="submit"].btn, input[type="submit"][value="发布"]');
+                // M-Team New
+                if (!target) target = document.querySelector('button.ant-btn-primary');
             } else if (path.includes('/details.php')) {
                 target = document.querySelector('a[href*="edit.php?id="]');
             } else if (path.includes('/edit.php')) {
@@ -1008,15 +1176,25 @@
             if (target) {
                 target.click();
             } else {
-                alert('快速操作按钮在此页面无效。');
+                alert('快速操作按钮在此页面无效或未适配。');
             }
         }
     };
 
     // Initialization
     UI.init();
+
+    // 启动队列检查 Worker (每5秒检查一次)
+    setInterval(Automation.queueWorker, 5000);
+
+    // 页面加载检查
     Automation.checkAndRun();
+
+    // URL 变化监听 (SPA 支持)
     if (window.onurlchange === null) {
-        window.addEventListener('urlchange', Automation.checkAndRun);
+        window.addEventListener('urlchange', () => {
+            // URL 变化后，DOM 可能还没渲染完，稍作延迟
+            setTimeout(Automation.checkAndRun, 1000);
+        });
     }
 })();
