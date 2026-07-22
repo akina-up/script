@@ -10,3 +10,7 @@
 ```'bot token1;bot token2' '频道ID1;频道ID2' '#自定义' "{{.IndexerName}}" "{{.TorrentName}}" '{{.Size}}' '{{.InfoUrl}}' '{{.Uploader}}'```
 
 多个频道或bot token用 ; 分割
+
+## Audio
+
+origin: https://github.com/9Oc/Squash-P2P-Scriptorium/tree/main/audio
