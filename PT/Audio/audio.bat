@@ -38,9 +38,6 @@ python "!SCRIPT_DIR!gen_waveforms.py" -i "!FILE!" -o "!BASENAME!_waveforms.png"
 python "!SCRIPT_DIR!compute_bit_depth.py" -i "!FILE!" -o "!BASENAME!_bit_depth.png"
 python "!SCRIPT_DIR!plotfreq.py" "!FILE!" -o "!BASENAME!_freq_response.png"
 sox.exe "!FILE!" -S -n spectrogram -x 4000 -y 513 -z 120 -w Kaiser -t "!OUTPUTNAME!" -o "!FILEPATH!!OUTPUTNAME!_spectrogram.png"
-(
-    echo !FILENAME!
-    echo.
-) > "!BASENAME!.txt"
-sox.exe "!FILE!" -n stats >> "!BASENAME!.txt" 2>&1
+rem sox stats + foobar2000 DR Meter -> merge results -> render !FILENAME!_dr_stats.png -> delete intermediate txt
+python "!SCRIPT_DIR!dr_stats.py" --no-pause "!FILE!"
 goto :EOF
