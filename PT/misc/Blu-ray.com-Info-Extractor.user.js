@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Blu-ray.com Info Extractor
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  Extracts release info, formats into BBCode, and grabs front cover image.
 // @author       akina
 // @downloadURL  https://cdn.jsdelivr.net/gh/akina-up/script@master/PT/misc/Blu-ray.com-Info-Extractor.user.js
@@ -36,7 +36,7 @@
     var infoText = parts.join(' | ');
     var currentUrl = window.location.href;
 
-    var formatFull = '[b]RELEASE INFO[/b]\n[b][url=' + currentUrl + ']' + infoText + '[/url][/b]';
+    var formatFull = '[center][b]RELEASE INFO[/b]\n[b][url=' + currentUrl + ']' + infoText + '[/url][/b][/center]';
     var formatShort = '[url=' + currentUrl + ']' + infoText + '[/url]';
 
     var imgElement = document.getElementById('frontimage_overlay');
