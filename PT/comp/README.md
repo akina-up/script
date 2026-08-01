@@ -14,10 +14,28 @@ bake 进镜像，容器秒起、重启不重装。
 
 ## 快速开始
 
+本项目是 `akina-up/script` 仓库里的一个子目录。整个仓库才 640 KB，
+**克隆全部再进来**最省事：
+
 ```bash
 git clone https://github.com/akina-up/script.git
 cd script/PT/comp
+```
 
+<details>
+<summary>只想签出这一个目录（sparse-checkout）</summary>
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/akina-up/script.git
+cd script && git sparse-checkout set PT/comp && cd PT/comp
+```
+
+省下来的也就 400 多 KB，纯粹是不想要另外 7 个无关目录时用。
+</details>
+
+然后配置并启动：
+
+```bash
 cp .env.example .env
 vim .env                 # 至少要改 MEDIA_DIR 和 WEBTOP_PASSWORD
 
