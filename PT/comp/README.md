@@ -15,7 +15,8 @@ bake 进镜像，容器秒起、重启不重装。
 ## 快速开始
 
 ```bash
-git clone <repo> comp && cd comp
+git clone https://github.com/akina-up/script.git
+cd script/PT/comp
 
 cp .env.example .env
 vim .env                 # 至少要改 MEDIA_DIR 和 WEBTOP_PASSWORD
