@@ -1,0 +1,12 @@
+# 本地配置，含密码，不要提交
+.env
+
+# 容器的 /config —— 桌面配置、venv 残留、lsmas 索引缓存
+config/
+
+# 构建日志
+build.log
+*.log
+
+# lsmas 索引
+*.lwi

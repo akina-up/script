@@ -1,0 +1,31 @@
+services:
+  webtop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vscomp-webtop:latest
+    container_name: vscomp
+
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      - TITLE=vscomp
+      - CUSTOM_USER=${WEBTOP_USER:-admin}
+      # 没设就直接报错停下，不给弱密码留默认值
+      - PASSWORD=${WEBTOP_PASSWORD:?请先复制 .env.example 为 .env 并设置 WEBTOP_PASSWORD}
+
+    volumes:
+      # 用相对路径，项目挪到别的机器也不用改这个文件
+      - ./config:/config
+      - ./compare.py:/comp/compare.py
+      # 片源目录。必须显式配置 —— 写死绝对路径的话，路径不存在时
+      # Docker 会默默建一个空目录挂进去，容器里看到的就是空的。
+      - ${MEDIA_DIR:?请在 .env 里设置 MEDIA_DIR（片源目录的绝对路径）}:/comp
+
+    ports:
+      - ${HTTP_PORT:-3010}:3000     # HTTP
+      - ${HTTPS_PORT:-3011}:3001    # HTTPS
+
+    shm_size: "1gb"
+    restart: unless-stopped
