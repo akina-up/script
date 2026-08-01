@@ -15,7 +15,7 @@ bake 进镜像，容器秒起、重启不重装。
 ## 快速开始
 
 ```bash
-git clone <repo> vscomp && cd vscomp
+git clone <repo> comp && cd comp
 
 cp .env.example .env
 vim .env                 # 至少要改 MEDIA_DIR 和 WEBTOP_PASSWORD
