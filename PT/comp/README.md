@@ -14,23 +14,27 @@ bake 进镜像，容器秒起、重启不重装。
 
 ## 快速开始
 
-本项目是 `akina-up/script` 仓库里的一个子目录。整个仓库才 640 KB，
-**克隆全部再进来**最省事：
+本项目是 `akina-up/script` 仓库里的一个子目录。用 sparse-checkout
+只拉这一个目录，不下载仓库里其他无关内容：
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/akina-up/script.git
+cd script
+git sparse-checkout set PT/comp
+cd PT/comp
+```
+
+仓库根目录的 `README.md` 会一并签出，那是 `--sparse` 的固有行为，忽略即可。
+
+<details>
+<summary>不想用 sparse-checkout</summary>
+
+整个仓库也才 640 KB，全拉下来再进子目录一样能用：
 
 ```bash
 git clone https://github.com/akina-up/script.git
 cd script/PT/comp
 ```
-
-<details>
-<summary>只想签出这一个目录（sparse-checkout）</summary>
-
-```bash
-git clone --filter=blob:none --sparse https://github.com/akina-up/script.git
-cd script && git sparse-checkout set PT/comp && cd PT/comp
-```
-
-省下来的也就 400 多 KB，纯粹是不想要另外 7 个无关目录时用。
 </details>
 
 然后配置并启动：
