@@ -141,6 +141,27 @@ VapourSynth 用系统版（Arch 的 `vapoursynth` 包），venv 通过
 
 ## 常见问题
 
+**端口被占着，但浏览器打不开 / `curl` 报 `TLS connect error`**
+容器里的 nginx 起不来。webtop 的 3000/3001 是 nginx 顶在前面的，它一挂就没人
+应答，但宿主机端口仍然被 `docker-proxy` 占着 —— `lsof` 看着一切正常，很容易
+误判成防火墙或安全组问题。
+
+确认方法：
+
+```bash
+docker logs --tail 30 vscomp | grep -i emerg
+```
+
+如果在刷 `unknown directive "fancyindex"`，就是基础镜像的 nginx 配置引用了
+未加载的模块。镜像里已经带了 `/custom-cont-init.d/10-fix-nginx.sh` 在服务启动
+前自动修复；万一基础镜像又换了新花样，先手动救急再反馈日志：
+
+```bash
+docker exec -u root vscomp bash -c \
+  "sed -i 's/^\([[:space:]]*fancyindex.*\)$/#\1/' /etc/nginx/conf.d/default.conf"
+docker restart vscomp
+```
+
 **`vspreview: command not found`**
 只在桌面终端里有效。`/usr/local/bin/vspreview` 是软链，`/usr/local/bin`
 永远在默认 PATH 里。如果确实没有，说明构建没跑完，看 `build.log`。

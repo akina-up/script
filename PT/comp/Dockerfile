@@ -34,4 +34,13 @@ RUN chmod +x /opt/vsbuild/build-aur.sh && /opt/vsbuild/build-vs.sh plugins
 RUN /opt/vsbuild/build-vs.sh python \
  && rm -rf /opt/vsbuild
 
+# --- nginx 修复 ---
+# 基础镜像的 nginx 配置引用了未加载的 fancyindex 模块，nginx 会 [emerg] 退出
+# 并被无限重启，导致端口占着却连不上。放在 /custom-cont-init.d/ 里，LSIO 会在
+# 服务启动前执行；同时在构建期跑一次，让镜像本身就是干净的。
+# 放在最后，改这个不会让前面几分钟的层失效。
+COPY fix-nginx.sh /custom-cont-init.d/10-fix-nginx.sh
+RUN chmod +x /custom-cont-init.d/10-fix-nginx.sh \
+ && /custom-cont-init.d/10-fix-nginx.sh
+
 # ENTRYPOINT / CMD 继承自 linuxserver 基础镜像（/init），不要覆盖。
