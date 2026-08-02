@@ -13,19 +13,30 @@ services:
       - TITLE=vscomp
       - CUSTOM_USER=${WEBTOP_USER:-admin}
       # 没设就直接报错停下，不给弱密码留默认值
-      - PASSWORD=${WEBTOP_PASSWORD:?请先复制 .env.example 为 .env 并设置 WEBTOP_PASSWORD}
+      # No default on purpose — fail loudly rather than ship a weak password
+      - PASSWORD=${WEBTOP_PASSWORD:?请先复制 .env.example 为 .env 并设置 WEBTOP_PASSWORD / copy .env.example to .env and set WEBTOP_PASSWORD}
 
     volumes:
       # 用相对路径，项目挪到别的机器也不用改这个文件
+      # Relative paths, so this file works unchanged on any machine
       - ./config:/config
       - ./compare.py:/comp/compare.py
-      # 片源目录。必须显式配置 —— 写死绝对路径的话，路径不存在时
-      # Docker 会默默建一个空目录挂进去，容器里看到的就是空的。
-      - ${MEDIA_DIR:?请在 .env 里设置 MEDIA_DIR（片源目录的绝对路径）}:/comp
+      # 片源目录，必须显式配置。写死绝对路径的话，路径不存在时 Docker 会
+      # 默默建一个空目录挂进去，容器里看到的就是空的 —— 排查起来很费时间。
+      #
+      # Media directory — must be configured explicitly. With a hardcoded
+      # absolute path, Docker silently creates an empty directory when the path
+      # doesn't exist and mounts that instead, which is painful to debug.
+      - ${MEDIA_DIR:?请在 .env 里设置 MEDIA_DIR（片源目录的绝对路径）/ set MEDIA_DIR in .env to your media directory}:/comp
 
     ports:
-      - ${HTTP_PORT:-3010}:3000     # HTTP
-      - ${HTTPS_PORT:-3011}:3001    # HTTPS
+      # 访问要用 HTTPS 和 HTTPS 端口，HTTP 那个不工作
+      # Use HTTPS on the HTTPS port — the plain HTTP one does not work
+      - ${HTTP_PORT:-3010}:3000
+      - ${HTTPS_PORT:-3011}:3001
 
+    # VapourSynth 多线程解码需要较大的共享内存
+    # VapourSynth's multithreaded decoding needs a decent amount of shared memory
     shm_size: "1gb"
+
     restart: unless-stopped
