@@ -152,13 +152,23 @@ VapourSynth 用系统版（Arch 的 `vapoursynth` 包），venv 通过
 docker logs --tail 30 vscomp | grep -i emerg
 ```
 
-如果在刷 `unknown directive "fancyindex"`，就是基础镜像的 nginx 配置引用了
-未加载的模块。镜像里已经带了 `/custom-cont-init.d/10-fix-nginx.sh` 在服务启动
-前自动修复；万一基础镜像又换了新花样，先手动救急再反馈日志：
+刷下面任一种就是基础镜像的 fancyindex 模块跟 nginx 对不上：
+
+```
+[emerg] unknown directive "fancyindex" in /etc/nginx/conf.d/default.conf:42
+[emerg] module ".../ngx_http_fancyindex_module.so" version 1030000 instead of 1030004
+```
+
+前者是模块没加载、配置却在用它的指令；后者是模块在、但给旧版 nginx 编的
+（Arch 滚动更新的版本错位）。镜像里已经带了
+`/custom-cont-init.d/10-fix-nginx.sh` 在服务启动前无条件禁用它，正常不会遇到。
+
+旧镜像手动救急（fancyindex 只影响目录列表外观，webtop 用不到，禁掉无副作用）：
 
 ```bash
 docker exec -u root vscomp bash -c \
-  "sed -i 's/^\([[:space:]]*fancyindex.*\)$/#\1/' /etc/nginx/conf.d/default.conf"
+  'mv /etc/nginx/modules.d/fancy.conf /etc/nginx/modules.d/fancy.conf.disabled 2>/dev/null
+   sed -i "s/^\([[:space:]]*fancyindex.*\)$/#\1/" /etc/nginx/conf.d/default.conf'
 docker restart vscomp
 ```
 
