@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+DGDEMUX="/root/dgdemuxgui/dgdemux"
+DOVI_TOOL="/root/dgdemuxgui/dovi_tool"
+RED=$'\033[31m'
+RESET=$'\033[0m'
+
+usage() {
+    printf '用法: %s "/path/BDMV/PLAYLIST/00001.mpls" "/output/dir/name"\n' "${0##*/}" >&2
+    printf '示例: %s "/bcache/up/Rouge.../BDMV/PLAYLIST/00001.mpls" "/bcache/Rouge/Rouge"\n' "${0##*/}" >&2
+    exit 2
+}
+
+section() {
+    printf '\n%s\n' '================================================================================'
+    printf '%s\n' "$1"
+    printf '%s\n' '================================================================================'
+}
+
+print_command() {
+    printf '+ '
+    printf '%q ' "$@"
+    printf '\n'
+}
+
+run() {
+    section "$1"
+    shift
+    print_command "$@"
+    "$@"
+}
+
+[[ $# -eq 2 ]] || usage
+
+playlist=$1
+output_base=${2%/}
+
+if [[ ! "$playlist" =~ /BDMV/PLAYLIST/[^/]+\.mpls$ ]]; then
+    printf '错误: 第一个参数必须是形如 /BDMV/PLAYLIST/xxxxx.mpls 的播放列表路径。\n' >&2
+    exit 2
+fi
+
+[[ -f "$playlist" ]] || {
+    printf '错误: 播放列表不存在: %s\n' "$playlist" >&2
+    exit 1
+}
+
+[[ -x "$DGDEMUX" ]] || {
+    printf '错误: 找不到可执行文件: %s\n' "$DGDEMUX" >&2
+    exit 1
+}
+
+[[ -x "$DOVI_TOOL" ]] || {
+    printf '错误: 找不到可执行文件: %s\n' "$DOVI_TOOL" >&2
+    exit 1
+}
+
+output_dir=$(dirname -- "$output_base")
+mkdir -p -- "$output_dir"
+
+log_file="${output_base}.txt"
+el_hevc="${output_base} PID 4117.hevc"
+p7_hevc="${output_base} merged_dovi.hevc"
+el_bin="${output_base}_RPU_EL.bin"
+p7_bin="${output_base}_RPU_P7.bin"
+el_scenes="${output_base}_RPU_EL.txt"
+p7_scenes="${output_base}_RPU_P7.txt"
+
+run '1/8  DGDemux：解流并合并 Dolby Vision' \
+    "$DGDEMUX" -l "$log_file" -i "$playlist" -o "$output_base" \
+    -demux 4113,4117 -mergedv
+
+[[ -f "$el_hevc" ]] || {
+    printf '错误: DGDemux 未生成预期文件: %s\n' "$el_hevc" >&2
+    exit 1
+}
+[[ -f "$p7_hevc" ]] || {
+    printf '错误: DGDemux 未生成预期文件: %s\n' "$p7_hevc" >&2
+    exit 1
+}
+
+run '2/8  从 EL 视频提取 RPU' \
+    "$DOVI_TOOL" extract-rpu "$el_hevc" -o "$el_bin"
+
+run '3/8  从合并后的 P7 视频提取 RPU' \
+    "$DOVI_TOOL" extract-rpu "$p7_hevc" -o "$p7_bin"
+
+run '4/8  导出 EL 场景信息' \
+    "$DOVI_TOOL" export -i "$el_bin" -d "scenes=$el_scenes"
+
+run '5/8  导出 P7 场景信息' \
+    "$DOVI_TOOL" export -i "$p7_bin" -d "scenes=$p7_scenes"
+
+section '6/8  比较 EL 与 P7 场景信息'
+print_command diff "$el_scenes" "$p7_scenes"
+set +e
+diff "$el_scenes" "$p7_scenes"
+diff_status=$?
+set -e
+if (( diff_status > 1 )); then
+    printf '错误: diff 执行失败，退出码: %d\n' "$diff_status" >&2
+    exit "$diff_status"
+elif (( diff_status == 0 )); then
+    printf '场景信息完全相同。\n'
+else
+    printf '场景信息存在差异（diff 退出码 1，脚本将继续）。\n'
+fi
+
+info_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/remuxdv.XXXXXXXX")
+trap 'rm -rf -- "$info_tmp_dir"' EXIT
+el_info="$info_tmp_dir/el-info.txt"
+p7_info="$info_tmp_dir/p7-info.txt"
+
+section '7/8  EL RPU 信息'
+print_command "$DOVI_TOOL" info -s "$el_bin"
+set +e
+"$DOVI_TOOL" info -s "$el_bin" 2>&1 | tee "$el_info"
+info_status=${PIPESTATUS[0]}
+set -e
+(( info_status == 0 )) || exit "$info_status"
+
+section '8/8  P7 RPU 信息'
+print_command "$DOVI_TOOL" info -s "$p7_bin"
+set +e
+"$DOVI_TOOL" info -s "$p7_bin" 2>&1 | tee "$p7_info"
+info_status=${PIPESTATUS[0]}
+set -e
+(( info_status == 0 )) || exit "$info_status"
+
+section 'EL 与 P7 的 info -s 差异（差异行标红）'
+set +e
+info_diff=$(diff -u --label 'EL RPU' --label 'P7 RPU' "$el_info" "$p7_info")
+info_diff_status=$?
+set -e
+
+if (( info_diff_status == 0 )); then
+    printf '两份 info -s 输出完全相同。\n'
+elif (( info_diff_status == 1 )); then
+    while IFS= read -r line; do
+        case "$line" in
+            '--- '*|'+++ '*|'@@ '*) printf '%s\n' "$line" ;;
+            -*|+*) printf '%s%s%s\n' "$RED" "$line" "$RESET" ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done <<< "$info_diff"
+else
+    printf '错误: 无法比较两份 info -s 输出。\n' >&2
+    exit "$info_diff_status"
+fi
+
+section '完成'
+printf '所有步骤均已执行完毕。\n'

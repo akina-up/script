@@ -11,6 +11,8 @@
 
 多个频道或bot token用 ; 分割
 
-## [Audio](https://github.com/akina-up/script/tree/master/PT/Audio)
+## [Audio](https://github.com/akina-up/script/tree/master/remux/Audio)
 
 origin: https://github.com/9Oc/Squash-P2P-Scriptorium/tree/main/audio
+
+## [DoVi](https://github.com/akina-up/script/tree/master/remux/DoVi)
